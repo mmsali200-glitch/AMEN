@@ -13,4 +13,6 @@ RUN mkdir -p data
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "node -e \"import('./server/seed.js').then(m => m.default ? m.default() : null).catch(() => null)\" 2>/dev/null; node dist/server/index.js"]
+ENV NODE_ENV=production
+
+CMD ["sh", "-c", "npx tsx server/seed.ts && npx tsx server/index.ts"]

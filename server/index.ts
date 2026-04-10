@@ -3,6 +3,7 @@ import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter, createContext } from "./router.js";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,8 +22,10 @@ app.get("/health", (_, res) => res.json({ status: "ok", time: new Date().toISOSt
 // Serve frontend in production
 if (process.env.NODE_ENV === "production") {
   const distPath = path.join(__dirname, "..", "dist", "client");
-  app.use(express.static(distPath));
-  app.get("*", (_, res) => res.sendFile(path.join(distPath, "index.html")));
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get("*", (_, res) => res.sendFile(path.join(distPath, "index.html")));
+  }
 }
 
 app.listen(PORT, () => {
