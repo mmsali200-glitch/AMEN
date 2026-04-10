@@ -531,21 +531,40 @@ function SyncCard({ item, dateFrom, dateTo, syncType, incOpening }:any) {
   useEffect(()=>{ logRef.current?.scrollTo(0,logRef.current.scrollHeight); },[log]);
   const add = (msg:string,type="info") => setLog(l=>[...l,{msg:`[${new Date().toLocaleTimeString("ar")}] ${msg}`,type}]);
 
+  const fullSyncMut = (trpc as any).odoo.fullSync.useMutation();
+
   const doSync = () => {
     if (!item.companyId || !item.odooId) return;
     setBusy(true); setDone(false); setLog([]); setPct(0); setRes(null);
     const steps:[number,string,string][] = [
-      [10,"🔗 الاتصال بـ Odoo...","info"],
-      [22,"✅ تم تسجيل الدخول","success"],
-      [35,"📊 حساب الأرصدة الافتتاحية...","info"],
-      [50,"📥 استيراد القيود المحاسبية...","info"],
-      [65,"⚙️ معالجة سطور القيود...","info"],
-      [80,"💾 حفظ في قاعدة البيانات...","info"],
+      [5,  "🔗 الاتصال بـ Odoo...","info"],
+      [15, "✅ تم تسجيل الدخول","success"],
+      [25, "📚 استيراد دليل الحسابات...","info"],
+      [35, "📋 استيراد الدفاتر المحاسبية...","info"],
+      [45, "👥 استيراد الشركاء (عملاء + موردون)...","info"],
+      [55, "📊 حساب الأرصدة الافتتاحية...","info"],
+      [68, "📥 استيراد القيود المحاسبية...","info"],
+      [82, "⚙️ معالجة وتصنيف السطور...","info"],
+      [92, "💾 حفظ كل البيانات...","info"],
     ];
     let si=0;
-    const iv=setInterval(()=>{ if(si<steps.length){ const[p,m,t]=steps[si]; setPct(p); add(m,t); si++; } },800);
-    syncMut.mutate({ companyId:item.companyId, odooCompanyId:item.odooId, dateFrom, dateTo, syncType, includeOpeningBalance:incOpening },{
-      onSuccess:(d:any)=>{ clearInterval(iv); setPct(100); add(`✅ ${d.inserted} قيد | رصيد افتتاحي: ${d.openingLines||0} سطر`,"success"); setRes(d); setDone(true); setBusy(false); refetch(); },
+    const iv=setInterval(()=>{ if(si<steps.length){ const[p,m,t]=steps[si]; setPct(p); add(m,t); si++; } },1000);
+
+    fullSyncMut.mutate({
+      companyId: item.companyId,
+      odooCompanyId: item.odooId,
+      dateFrom, dateTo,
+      models: ["coa","journals","partners","currencies","entries"]
+    },{
+      onSuccess:(d:any)=>{
+        clearInterval(iv); setPct(100);
+        add(`✅ دليل الحسابات: ${d.coa||0} حساب`,"success");
+        add(`✅ الدفاتر: ${d.journals||0} دفتر`,"success");
+        add(`✅ الشركاء: ${d.partners||0} شريك`,"success");
+        add(`✅ القيود: ${d.entries||0} قيد`,"success");
+        add(`✅ الرصيد الافتتاحي: ${d.openingLines||0} سطر`,"success");
+        setRes(d); setDone(true); setBusy(false); refetch();
+      },
       onError:(e:any)=>{ clearInterval(iv); add(`❌ ${e.message}`,"error"); setBusy(false); setPct(0); }
     });
   };

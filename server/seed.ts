@@ -77,7 +77,124 @@ async function seed() {
   console.log("   fatima@cfo.local   →  Fatima@123  (محاسب)");
   console.log("   mkandari@cfo.local →  Mohammed@123 (مدقق)");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-  process.exit(0);
+  
+// ── جداول Odoo الكاملة ────────────────────────────────────────────────────────
+async function createOdooTables() {
+  // دليل الحسابات
+  await db.run(sql`CREATE TABLE IF NOT EXISTS accounts_coa (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_account_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    account_type TEXT,           -- النوع من Odoo (asset_receivable, expense, income, etc.)
+    internal_type TEXT,          -- payable, receivable, liquidity, other
+    internal_group TEXT,         -- asset, liability, equity, income, expense
+    cfo_type TEXT,               -- تصنيفنا: assets, liabilities, equity, revenue, expenses, cogs, other_income, other_expenses
+    currency_id INTEGER,
+    deprecated INTEGER DEFAULT 0,
+    UNIQUE(company_id, odoo_account_id)
+  )`);
+
+  // الدفاتر المحاسبية
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_journals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_journal_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT,
+    type TEXT,                   -- sale, purchase, cash, bank, general
+    currency_id INTEGER,
+    default_account_id INTEGER,
+    UNIQUE(company_id, odoo_journal_id)
+  )`);
+
+  // الشركاء (عملاء وموردون)
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_partners_full (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_partner_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    ref TEXT,
+    email TEXT,
+    phone TEXT,
+    mobile TEXT,
+    vat TEXT,
+    street TEXT,
+    city TEXT,
+    country TEXT,
+    is_customer INTEGER DEFAULT 0,
+    is_supplier INTEGER DEFAULT 0,
+    customer_rank INTEGER DEFAULT 0,
+    supplier_rank INTEGER DEFAULT 0,
+    total_receivable REAL DEFAULT 0,
+    total_payable REAL DEFAULT 0,
+    UNIQUE(company_id, odoo_partner_id)
+  )`);
+
+  // العملات
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_currencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    odoo_currency_id INTEGER NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    symbol TEXT,
+    rate REAL DEFAULT 1.0,
+    active INTEGER DEFAULT 1
+  )`);
+
+  // المنتجات والخدمات
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_product_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT,
+    category TEXT,
+    list_price REAL DEFAULT 0,
+    standard_price REAL DEFAULT 0,
+    UNIQUE(company_id, odoo_product_id)
+  )`);
+
+  // الضرائب
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_taxes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_tax_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT,
+    amount REAL DEFAULT 0,
+    amount_type TEXT,
+    UNIQUE(company_id, odoo_tax_id)
+  )`);
+
+  // الحسابات التحليلية
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_analytic_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    odoo_analytic_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT,
+    balance REAL DEFAULT 0,
+    UNIQUE(company_id, odoo_analytic_id)
+  )`);
+
+  // سجل المزامنة الشامل
+  await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_sync_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    model_name TEXT NOT NULL,
+    last_sync_at TEXT,
+    records_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    error TEXT,
+    UNIQUE(company_id, model_name)
+  )`);
+
+  console.log("✓ جداول Odoo الكاملة جاهزة");
+}
+createOdooTables().catch(e => console.error("Odoo tables error:", e));
+
+process.exit(0);
 }
 
 seed().catch(e => { console.error(e); process.exit(1); });
