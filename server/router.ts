@@ -414,94 +414,82 @@ const journalRouter = router({
       return { lastSync, totalEntries:total, totalLines:lines };
     }),
 
-  // ميزان المراجعة — مع الرصيد الافتتاحي الصحيح
+  // ميزان المراجعة — raw SQL للموثوقية الكاملة
   trialBalance: protectedProcedure
     .input(z.object({ companyId:z.number(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
+      const cid = input.companyId;
+      const dF  = input.dateFrom;
+      const dT  = input.dateTo;
 
-      // الرصيد الافتتاحي = كل الحركات قبل بداية الفترة
-      const opening = await db.select({
-        accountCode: schema.journalEntryLines.accountCode,
-        accountName: schema.journalEntryLines.accountName,
-        accountType: schema.journalEntryLines.accountType,
-        openDebit:   sql<number>`sum(debit)`,
-        openCredit:  sql<number>`sum(credit)`,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          sql`${schema.journalEntryLines.date} < ${input.dateFrom}`
-        ))
-        .groupBy(schema.journalEntryLines.accountCode);
+      const openRows = await db.run(sql`
+        SELECT jl.account_code, jl.account_name, jl.account_type,
+               SUM(jl.debit) as open_debit, SUM(jl.credit) as open_credit
+        FROM journal_entry_lines jl
+        WHERE jl.company_id = ${cid}
+          AND (jl.date < ${dF} OR jl.date IS NULL OR jl.date = '')
+        GROUP BY jl.account_code`);
 
-      // حركة الفترة
-      const movement = await db.select({
-        accountCode: schema.journalEntryLines.accountCode,
-        accountName: schema.journalEntryLines.accountName,
-        accountType: schema.journalEntryLines.accountType,
-        mvtDebit:    sql<number>`sum(debit)`,
-        mvtCredit:   sql<number>`sum(credit)`,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          sql`${schema.journalEntryLines.date} >= ${input.dateFrom}`,
-          sql`${schema.journalEntryLines.date} <= ${input.dateTo}`,
-          sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-        ))
-        .groupBy(schema.journalEntryLines.accountCode);
+      const mvtRows = await db.run(sql`
+        SELECT jl.account_code, jl.account_name, jl.account_type,
+               SUM(jl.debit) as mvt_debit, SUM(jl.credit) as mvt_credit
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id = ${cid}
+          AND jl.date >= ${dF} AND jl.date <= ${dT}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+        GROUP BY jl.account_code`);
 
-      // دمج
       const map: Record<string,any> = {};
-      for (const o of opening) {
-        map[o.accountCode] = {
-          accountCode: o.accountCode,
-          accountName: o.accountName,
-          accountType: o.accountType || classifyAccount(o.accountCode, o.accountName),
-          openDebit:   o.openDebit  || 0,
-          openCredit:  o.openCredit || 0,
+
+      for (const o of (openRows as any).rows||[]) {
+        const code = o.account_code||"";
+        map[code] = {
+          accountCode: code,
+          accountName: o.account_name||"",
+          accountType: o.account_type||classifyAccount(code,o.account_name||""),
+          openDebit:  Number(o.open_debit)||0,
+          openCredit: Number(o.open_credit)||0,
           mvtDebit: 0, mvtCredit: 0,
         };
       }
-      for (const m of movement) {
-        if (!map[m.accountCode]) map[m.accountCode] = { accountCode:m.accountCode, accountName:m.accountName, accountType:m.accountType||classifyAccount(m.accountCode, m.accountName), openDebit:0, openCredit:0 };
-        map[m.accountCode].mvtDebit  = m.mvtDebit  || 0;
-        map[m.accountCode].mvtCredit = m.mvtCredit || 0;
+      for (const m of (mvtRows as any).rows||[]) {
+        const code = m.account_code||"";
+        if (!map[code]) map[code] = {
+          accountCode:code, accountName:m.account_name||"",
+          accountType:m.account_type||classifyAccount(code,m.account_name||""),
+          openDebit:0, openCredit:0
+        };
+        map[code].mvtDebit  = Number(m.mvt_debit)||0;
+        map[code].mvtCredit = Number(m.mvt_credit)||0;
       }
 
-      return Object.values(map).map((r:any) => {
-        const netOpen    = r.openDebit - r.openCredit;
-        const netMvt     = r.mvtDebit  - r.mvtCredit;
-        const netClosing = netOpen + netMvt;
-        return {
-          ...r,
-          openingBalance:  netOpen,
-          closingBalance:  netClosing,
-          closingDebit:    netClosing > 0 ? netClosing : 0,
-          closingCredit:   netClosing < 0 ? Math.abs(netClosing) : 0,
-        };
-      }).sort((a,b) => a.accountCode.localeCompare(b.accountCode));
+      return Object.values(map)
+        .filter((r:any)=>r.openDebit||r.openCredit||r.mvtDebit||r.mvtCredit)
+        .map((r:any)=>{
+          const netOpen=r.openDebit-r.openCredit, netMvt=r.mvtDebit-r.mvtCredit, netClose=netOpen+netMvt;
+          return {...r, openingBalance:netOpen, closingBalance:netClose, closingDebit:netClose>0?netClose:0, closingCredit:netClose<0?Math.abs(netClose):0};
+        }).sort((a:any,b:any)=>a.accountCode.localeCompare(b.accountCode));
     }),
 
-  // قائمة الدخل
+  // قائمة الدخل — raw SQL
   incomeStatement: protectedProcedure
     .input(z.object({ companyId:z.number(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
-      const rows = await db.select({
-        accountType: schema.journalEntryLines.accountType,
-        accountCode: schema.journalEntryLines.accountCode,
-        accountName: schema.journalEntryLines.accountName,
-        debit:  sql<number>`sum(debit)`,
-        credit: sql<number>`sum(credit)`,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          sql`${schema.journalEntryLines.date} >= ${input.dateFrom}`,
-          sql`${schema.journalEntryLines.date} <= ${input.dateTo}`,
-          sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-        ))
-        .groupBy(schema.journalEntryLines.accountCode);
+      const rawRows = await db.run(sql`
+        SELECT jl.account_type, jl.account_code, jl.account_name,
+               SUM(jl.debit) as debit, SUM(jl.credit) as credit
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id = ${input.companyId}
+          AND jl.date >= ${input.dateFrom}
+          AND jl.date <= ${input.dateTo}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+        GROUP BY jl.account_code`);
+      const rows = ((rawRows as any).rows||[]).map((r:any)=>({
+        accountType:r.account_type, accountCode:r.account_code, accountName:r.account_name,
+        debit:Number(r.debit)||0, credit:Number(r.credit)||0
+      }));
 
       let revenue=0,cogs=0,expenses=0,otherIncome=0,otherExpenses=0;
       const details: Record<string,any[]> = { revenue:[],cogs:[],expenses:[],other_income:[],other_expenses:[] };
@@ -520,23 +508,21 @@ const journalRouter = router({
       return { revenue,cogs,grossProfit,expenses,operatingProfit,otherIncome,otherExpenses,netProfit,details };
     }),
 
-  // الميزانية العمومية
+  // الميزانية العمومية — raw SQL
   balanceSheet: protectedProcedure
     .input(z.object({ companyId:z.number(), asOf:z.string() }))
     .query(async ({ input }) => {
-      const rows = await db.select({
-        accountType: schema.journalEntryLines.accountType,
-        accountCode: schema.journalEntryLines.accountCode,
-        accountName: schema.journalEntryLines.accountName,
-        debit:  sql<number>`sum(debit)`,
-        credit: sql<number>`sum(credit)`,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          sql`${schema.journalEntryLines.date} <= ${input.asOf}`
-        ))
-        .groupBy(schema.journalEntryLines.accountCode);
+      const rawRows = await db.run(sql`
+        SELECT jl.account_type, jl.account_code, jl.account_name,
+               SUM(jl.debit) as debit, SUM(jl.credit) as credit
+        FROM journal_entry_lines jl
+        WHERE jl.company_id = ${input.companyId}
+          AND (jl.date <= ${input.asOf} OR jl.date IS NULL OR jl.date = '')
+        GROUP BY jl.account_code`);
+      const rows = ((rawRows as any).rows||[]).map((r:any)=>({
+        accountType:r.account_type, accountCode:r.account_code, accountName:r.account_name,
+        debit:Number(r.debit)||0, credit:Number(r.credit)||0
+      }));
 
       let assets=0,liabilities=0,equity=0;
       const details: Record<string,any[]> = { assets:[],liabilities:[],equity:[] };
@@ -591,31 +577,28 @@ const journalRouter = router({
   monthlyAnalysis: protectedProcedure
     .input(z.object({ companyId:z.number(), year:z.number() }))
     .query(async ({ input }) => {
-      const months = [];
-      for (let m=1; m<=12; m++) {
-        const dF = `${input.year}-${String(m).padStart(2,"0")}-01`;
-        const dT = `${input.year}-${String(m).padStart(2,"0")}-31`;
-        const rows = await db.select({
-          accountType:schema.journalEntryLines.accountType,
-          debit:sql<number>`sum(debit)`,
-          credit:sql<number>`sum(credit)`,
-        }).from(schema.journalEntryLines)
-          .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-          .where(and(
-            eq(schema.journalEntryLines.companyId, input.companyId),
-            sql`${schema.journalEntryLines.date} >= ${dF}`,
-            sql`${schema.journalEntryLines.date} <= ${dT}`,
-            sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-          ))
-          .groupBy(schema.journalEntryLines.accountType);
-        let revenue=0,expenses=0,cogs=0;
-        for (const r of rows) {
-          if (r.accountType==="revenue") revenue+=(r.credit||0)-(r.debit||0);
-          else if (r.accountType==="expenses") expenses+=(r.debit||0)-(r.credit||0);
-          else if (r.accountType==="cogs") cogs+=(r.debit||0)-(r.credit||0);
-        }
-        months.push({ month:m, revenue, expenses:expenses+cogs, profit:revenue-expenses-cogs });
+      // جلب كل البيانات السنوية دفعة واحدة (أسرع)
+      const allRows = await db.run(sql`
+        SELECT substr(jl.date,6,2) as month_num, jl.account_type,
+               SUM(jl.debit) as debit, SUM(jl.credit) as credit
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id = ${input.companyId}
+          AND jl.date >= ${input.year + '-01-01'}
+          AND jl.date <= ${input.year + '-12-31'}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+        GROUP BY month_num, jl.account_type`);
+
+      const months = Array.from({length:12},(_,i)=>({month:i+1,revenue:0,expenses:0,profit:0}));
+      for (const r of (allRows as any).rows||[]) {
+        const mi = parseInt(r.month_num||"0")-1;
+        if (mi<0||mi>11) continue;
+        const d=Number(r.debit)||0, c=Number(r.credit)||0;
+        const type=r.account_type||"";
+        if (type==="revenue")  months[mi].revenue  += c-d;
+        else if (type==="expenses"||type==="cogs") months[mi].expenses += d-c;
       }
+      months.forEach(m=>m.profit=m.revenue-m.expenses);
       return months;
     }),
 

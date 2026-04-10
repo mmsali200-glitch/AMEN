@@ -29,16 +29,17 @@ const Spinner = () => <div style={{ width:16, height:16, border:"2px solid rgba(
 const NoData = ({ text="لا توجد بيانات — قم بمزامنة Odoo أولاً" }:any) => <div style={{ padding:60, textAlign:"center", direction:"rtl" }}><div style={{ fontSize:40, marginBottom:12 }}>📭</div><p style={{ color:C.muted, fontSize:13 }}>{text}</p></div>;
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
-function DashboardPage({ companyId, co }:any) {
-  const { data:sync } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId });
+function DashboardPage({ companyId, co, onNavigate }:any) {
+  const { data:sync } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId, refetchInterval:5000 });
   const year = new Date().getFullYear();
-  const { data:income } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:`${year}-01-01`, dateTo:`${year}-12-31` }, { enabled:!!companyId && (sync?.totalEntries||0)>0 });
+  const hasData = (sync?.totalLines||0) > 0;
+  const { data:income } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:`${year}-01-01`, dateTo:`${year}-12-31` }, { enabled:!!companyId && hasData });
 
   const kpis = [
-    { l:"إجمالي الإيرادات",    v:fmtM(income?.revenue||0),    icon:"💰", bg:C.primaryLight, c:C.primary },
-    { l:"صافي الربح",          v:fmtM(income?.netProfit||0),   icon:"📈", bg:C.greenLight,   c:C.green },
-    { l:"القيود المحاسبية",    v:fmt(sync?.totalEntries||0),   icon:"📋", bg:C.tealLight,    c:C.teal },
-    { l:"هامش الربح",          v:`${income?.revenue ? ((income.netProfit/income.revenue)*100).toFixed(1) : 0}%`, icon:"📊", bg:C.amberLight, c:C.amber },
+    { l:"إجمالي الإيرادات",  v:fmtM(income?.revenue||0),  icon:"💰", bg:C.primaryLight, c:C.primary },
+    { l:"صافي الربح",        v:fmtM(income?.netProfit||0), icon:"📈", bg:C.greenLight,   c:C.green },
+    { l:"القيود المحاسبية",  v:fmt(sync?.totalEntries||0), icon:"📋", bg:C.tealLight,    c:C.teal },
+    { l:"سطور القيود",       v:fmt(sync?.totalLines||0),   icon:"📄", bg:C.amberLight,   c:C.amber },
   ];
 
   return (
@@ -61,15 +62,21 @@ function DashboardPage({ companyId, co }:any) {
           <p style={{ color:C.textSec, fontWeight:600, margin:"0 0 6px" }}>اختر شركة من القائمة أعلاه</p>
           <p style={{ color:C.muted, fontSize:12, margin:0 }}>ثم قم بمزامنة بيانات Odoo لعرض التحليلات</p>
         </Card>
-      ) : (sync?.totalEntries||0) === 0 ? (
+      ) : !hasData ? (
         <Card style={{ background:"linear-gradient(135deg,#EFF6FF,#F0FDFA)", padding:"28px 24px", textAlign:"center" }}>
           <div style={{ fontSize:40, marginBottom:12 }}>🔗</div>
-          <p style={{ color:C.primary, fontWeight:700, margin:"0 0 6px", fontSize:16 }}>لا توجد بيانات بعد</p>
-          <p style={{ color:C.textSec, fontSize:13, margin:"0 0 16px" }}>قم بمزامنة Odoo لاستيراد القيود المحاسبية وعرض التقارير المالية</p>
-          <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
-            {["إعداد Odoo","مزامنة الحركات","ميزان المراجعة","قائمة الدخل"].map(t=>(
-              <span key={t} style={{ padding:"5px 12px", borderRadius:18, background:"rgba(37,99,235,0.1)", color:C.primary, fontSize:12, fontWeight:600 }}>{t}</span>
-            ))}
+          <p style={{ color:C.primary, fontWeight:700, margin:"0 0 6px", fontSize:16 }}>
+            {(sync?.totalEntries||0)>0 ? "⚠️ القيود موجودة لكن السطور فارغة" : "لا توجد بيانات بعد"}
+          </p>
+          <p style={{ color:C.textSec, fontSize:13, margin:"0 0 6px" }}>
+            القيود: {fmt(sync?.totalEntries||0)} | السطور: {fmt(sync?.totalLines||0)}
+          </p>
+          <p style={{ color:C.textSec, fontSize:13, margin:"0 0 16px" }}>
+            {(sync?.totalEntries||0)>0 ? "أعد المزامنة بنوع كاملة وتأكد من اختيار الشركة الصحيحة في Odoo" : "اذهب لصفحة ربط Odoo وابدأ المزامنة"}
+          </p>
+          <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+            <button onClick={()=>onNavigate&&onNavigate("odoo-wizard")} style={{ padding:"9px 20px", borderRadius:9, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>🔗 ربط Odoo + مزامنة</button>
+            <button onClick={()=>onNavigate&&onNavigate("diagnostics")} style={{ padding:"9px 16px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>🔬 تشخيص</button>
           </div>
         </Card>
       ) : (
@@ -1560,7 +1567,7 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
 
   const renderPage = () => {
     switch(page) {
-      case "dashboard":         return <DashboardPage companyId={companyId} co={co}/>;
+      case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
       case "odoo-wizard":        return <OdooWizardPage companyId={companyId} co={co}/>;
 
       case "trial-balance":     return <TrialBalancePage companyId={companyId}/>;
