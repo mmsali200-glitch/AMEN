@@ -1371,12 +1371,56 @@ function HoldingCompaniesPage({ currentUser }:any) {
     });
   };
 
+  const [linkProgress, setLinkProgress] = useState<{step:string,done:boolean,error?:string}[]>([]);
+  const [linkCurrent, setLinkCurrent] = useState(0);
+  const linkSingle = (trpc as any).groups.linkSingleCompany.useMutation();
+
   const handleLink = async () => {
     if (!activeGroup || selected.size===0) return;
     setLinking(true);
-    const toLink = discovered.filter(c=>selected.has(c.id)).map(c=>({ odooId:c.id, name:c.name, currency:c.currency||"KWD" }));
-    const res = await linkCompanies.mutateAsync({ groupId:activeGroup.id, companies:toLink });
-    setLinked(res.created||[]);
+    setStep("linking" as any);
+    setLinked([]);
+    setLinkProgress([]);
+    setLinkCurrent(0);
+
+    const toLink = discovered.filter((c:any)=>selected.has(c.id));
+    const results:any[] = [];
+
+    for (let i=0; i<toLink.length; i++) {
+      const c = toLink[i];
+      setLinkCurrent(i);
+      const steps = [
+        `📝 إنشاء سجل الشركة: ${c.name}`,
+        `🔑 إعطاء صلاحيات المستخدم`,
+        `🔗 نسخ إعدادات Odoo (ID: ${c.id})`,
+        `🏛️ ربط بالمجموعة القابضة`,
+        `✅ اكتملت: ${c.name}`,
+      ];
+
+      // Show steps progressively
+      for (let s=0; s<steps.length-1; s++) {
+        setLinkProgress(p => [...p, {step:steps[s], done:false}]);
+        await new Promise(r=>setTimeout(r, 350));
+        setLinkProgress(p => p.map((x,xi)=>xi===p.length-1?{...x,done:true}:x));
+        await new Promise(r=>setTimeout(r, 150));
+      }
+
+      try {
+        const res = await linkSingle.mutateAsync({ groupId:activeGroup.id, odooId:c.id, name:c.name, currency:c.currency||"KWD" });
+        setLinkProgress(p => [...p, {step:steps[steps.length-1], done:true}]);
+        results.push({ ...res, name:c.name });
+      } catch(e:any) {
+        setLinkProgress(p => [...p, {step:`❌ خطأ في ${c.name}: ${e.message}`, done:true, error:e.message}]);
+        results.push({ status:"error", name:c.name, error:e.message });
+      }
+
+      if (i < toLink.length-1) {
+        setLinkProgress(p => [...p, {step:"─────────────────────────", done:true}]);
+      }
+      await new Promise(r=>setTimeout(r, 200));
+    }
+
+    setLinked(results);
     setStep("done");
     setLinking(false);
     refetch();
@@ -1580,6 +1624,57 @@ function HoldingCompaniesPage({ currentUser }:any) {
         </div>
       )}
 
+      {/* Step: Linking Progress */}
+      {(step as any)==="linking" && (
+        <Card style={{ padding:"24px" }}>
+          <div style={{ marginBottom:18 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <p style={{ fontWeight:800, fontSize:15, color:C.text, margin:0 }}>🔄 جاري ربط الشركات بالمجموعة...</p>
+              <span style={{ fontSize:13, color:C.primary, fontWeight:600 }}>
+                {linkCurrent+1} / {selected.size}
+              </span>
+            </div>
+            {/* Progress bar */}
+            <div style={{ background:"#F1F5F9", borderRadius:8, height:10, overflow:"hidden", marginBottom:4 }}>
+              <div style={{ height:"100%", background:"linear-gradient(90deg,#2563EB,#0D9488)", borderRadius:8, transition:"width 0.4s ease", width:`${Math.round(((linkCurrent)/(selected.size||1))*100)}%` }}/>
+            </div>
+            <p style={{ fontSize:11, color:C.muted, margin:0 }}>{Math.round(((linkCurrent)/(selected.size||1))*100)}% مكتمل</p>
+          </div>
+
+          {/* Live log terminal */}
+          <div style={{ background:"#0F172A", borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"10px 16px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ display:"flex", gap:5 }}>
+                <div style={{ width:10, height:10, borderRadius:"50%", background:"#EF4444" }}/>
+                <div style={{ width:10, height:10, borderRadius:"50%", background:"#F59E0B" }}/>
+                <div style={{ width:10, height:10, borderRadius:"50%", background:"#10B981" }}/>
+              </div>
+              <span style={{ fontSize:11, color:"#64748B", fontFamily:"monospace" }}>cfo-system — عمليات الربط</span>
+            </div>
+            <div style={{ padding:"14px 16px", maxHeight:280, overflowY:"auto", display:"flex", flexDirection:"column", gap:5 }}>
+              {linkProgress.map((item, i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:11, color:item.error?"#F87171":item.done?"#34D399":"#60A5FA", flexShrink:0 }}>
+                    {item.step.startsWith("─")?"":(item.done?(item.error?"✗":"✓"):"⟳")}
+                  </span>
+                  <span style={{ fontSize:12, color:item.step.startsWith("─")?"#1E3A5F":item.error?"#F87171":item.done?"#E2E8F0":"#94A3B8", fontFamily:"monospace", flex:1 }}>
+                    {item.step}
+                  </span>
+                  {item.done && !item.error && !item.step.startsWith("─") && (
+                    <span style={{ fontSize:10, color:"#34D399" }}>✓</span>
+                  )}
+                </div>
+              ))}
+              {/* Animated cursor */}
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:12, color:"#2563EB" }}>$</span>
+                <span style={{ width:8, height:14, background:"#2563EB", display:"inline-block", animation:"blink 1s step-end infinite" }}/>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Step: Done */}
       {step==="done" && (
         <Card style={{ padding:"32px", textAlign:"center", background:"linear-gradient(135deg,#ECFDF5,#F0FDFA)" }}>
@@ -1765,7 +1860,7 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
 
   return (
     <div style={{ display:"flex", height:"100vh", background:C.bg, fontFamily:"'Cairo','Segoe UI',sans-serif", overflow:"hidden" }}>
-      <style>{`*{box-sizing:border-box;} ::-webkit-scrollbar{width:4px;height:4px;} ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;} button,input,select{font-family:inherit;} @keyframes spin{to{transform:rotate(360deg)}} @keyframes bounce{from{transform:translateY(0);opacity:0.4}to{transform:translateY(-4px);opacity:1}}`}</style>
+      <style>{`*{box-sizing:border-box;} ::-webkit-scrollbar{width:4px;height:4px;} ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;} button,input,select{font-family:inherit;} @keyframes spin{to{transform:rotate(360deg)}} @keyframes bounce{from{transform:translateY(0);opacity:0.4}to{transform:translateY(-4px);opacity:1}} @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
       <aside style={{ width:open?256:0, background:C.sidebar, flexShrink:0, display:"flex", flexDirection:"column", overflow:"hidden", transition:"width 0.22s ease", borderLeft:`1px solid #E8EFFE`, boxShadow:"2px 0 16px rgba(37,99,235,0.06)" }}>
         <div style={{ minWidth:256, display:"flex", flexDirection:"column", height:"100%" }}>
           <div style={{ padding:"16px 14px 12px", borderBottom:`1px solid #E8EFFE` }}>

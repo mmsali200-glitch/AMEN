@@ -849,6 +849,47 @@ const groupsRouter = router({
       return (rows as any).rows || [];
     }),
 
+  // ربط شركة واحدة (للتقدم التدريجي)
+  linkSingleCompany: adminProcedure
+    .input(z.object({
+      groupId: z.number(),
+      odooId: z.number(),
+      name: z.string(),
+      currency: z.string().default("KWD"),
+      industry: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const groupRows = await db.run(sql`SELECT * FROM company_groups WHERE id = ${input.groupId} LIMIT 1`);
+      const group = (groupRows as any).rows?.[0];
+      if (!group) throw new TRPCError({ code:"NOT_FOUND" });
+
+      // هل الشركة موجودة؟
+      const existing = await db.run(sql`SELECT cgm.company_id, c.name FROM company_group_members cgm JOIN companies c ON c.id=cgm.company_id WHERE cgm.group_id=${input.groupId} AND cgm.odoo_company_id=${input.odooId} LIMIT 1`);
+      if ((existing as any).rows?.length) {
+        return { status:"already_exists", companyId:(existing as any).rows[0].company_id, name:input.name };
+      }
+
+      // 1. إنشاء الشركة في النظام
+      const [newCo] = await db.insert(schema.companies).values({
+        name: input.name, currency: input.currency,
+        industry: input.industry || "", createdBy: ctx.user.id,
+      }).returning();
+
+      // 2. صلاحيات المستخدم الحالي
+      await db.run(sql`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, assigned_by, status) VALUES (${ctx.user.id}, ${newCo.id}, 'cfo_admin', ${ctx.user.id}, 'active')`);
+
+      // 3. نسخ إعدادات Odoo
+      await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)`);
+
+      // 4. ربط بالمجموعة
+      await db.run(sql`INSERT INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, sync_status) VALUES (${input.groupId}, ${newCo.id}, ${input.odooId}, ${input.name}, 'pending')`);
+
+      // 5. سجل المراجعة
+      await db.insert(schema.auditLogs).values({ userId:ctx.user.id, companyId:newCo.id, action:"link_company_to_group", target:input.name });
+
+      return { status:"created", companyId:newCo.id, name:input.name };
+    }),
+
   // حذف مجموعة
   delete: adminProcedure
     .input(z.object({ id:z.number() }))
