@@ -235,7 +235,7 @@ const odooRouter = router({
     .mutation(async ({ input }) => {
       const conn = new OdooConnector(input.url, input.database, input.username, input.password);
       await conn.authenticate();
-      const version = await conn.getVersion();
+      const version = conn.getVersionString();
       const companies = await conn.getCompanies();
       return {
         success: true,
@@ -965,7 +965,7 @@ const groupsRouter = router({
 
       const conn = new OdooConnector(group.odoo_url, group.odoo_database, group.odoo_username, group.odoo_password);
       await conn.authenticate();
-      const version = await conn.getVersion();
+      const version = conn.getVersionString();
       const companies = await conn.getCompanies();
 
       // تحديث حالة الاتصال
