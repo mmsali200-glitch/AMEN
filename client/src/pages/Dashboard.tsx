@@ -91,115 +91,193 @@ function DashboardPage({ companyId, co }:any) {
 }
 
 // ── Odoo Setup ─────────────────────────────────────────────────────────────────
-function OdooSetupPage({ companyId, co }:any) {
-  const [form, setForm] = useState({ url:"https://onesolutionc-roma.odoo.com", database:"onesolutionc-roma-main-17095422", username:"admin@admin.com", password:"KMM9999" });
-  const [step, setStep] = useState<"idle"|"testing"|"selecting"|"done"|"error">("idle");
+function OdooSetupPage({ companyId, co, onNavigate }:any) {
+  const { data:groups } = (trpc as any).groups.list.useQuery();
+  const { data:config }  = trpc.odoo.getConfig.useQuery({ companyId }, { enabled:!!companyId });
+
+  // هل الشركة الحالية مرتبطة بمجموعة قابضة؟
+  const linkedGroup = groups?.find((g:any) =>
+    g.is_connected && config &&
+    g.odoo_url === (config as any)?.url &&
+    g.odoo_database === (config as any)?.database
+  );
+
+  // نموذج إعداد مباشر للشركة (إذا لم تكن ضمن مجموعة)
+  const [form, setForm] = useState({
+    url:"https://onesolutionc-roma.odoo.com",
+    database:"onesolutionc-roma-main-17095422",
+    username:"admin@admin.com",
+    password:"KMM9999"
+  });
+  const [step, setStep] = useState<"idle"|"testing"|"done"|"error">("idle");
   const [result, setResult] = useState<any>(null);
-  const [selectedOdooCompany, setSelectedOdooCompany] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState("");
-  const saveConfig = trpc.odoo.saveConfig.useMutation();
+  const [selectedOdooCompany, setSelectedOdooCompany] = useState<any>(null);
+  const saveConfig   = trpc.odoo.saveConfig.useMutation();
   const testDiscover = trpc.odoo.testAndDiscover.useMutation();
 
   const handleTest = () => {
-    if (!companyId) return alert("اختر شركة من النظام أولاً");
+    if (!companyId) return alert("اختر شركة أولاً");
     setStep("testing"); setErrorMsg(""); setResult(null); setSelectedOdooCompany(null);
     testDiscover.mutate(form, {
-      onSuccess: (data) => { setResult(data); setStep("selecting"); },
-      onError: (err) => { setStep("error"); setErrorMsg(err.message); }
+      onSuccess:(data:any) => { setResult(data); setStep("done"); },
+      onError:(err:any)  => { setStep("error"); setErrorMsg(err.message); }
     });
   };
 
-  const handleSelectCompany = async (odooCompany: any) => {
+  const handleSelectCompany = async (odooCompany:any) => {
     setSelectedOdooCompany(odooCompany);
-    await saveConfig.mutateAsync({ companyId, ...form, odooCompanyId: odooCompany.id, odooCompanyName: odooCompany.name });
-    setStep("done");
+    await saveConfig.mutateAsync({ companyId, ...form, odooCompanyId:odooCompany.id, odooCompanyName:odooCompany.name });
   };
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      <PageTitle title="🔗 إعداد وربط Odoo ERP" sub="اربط شركتك بـ Odoo لاستيراد جميع البيانات المحاسبية" />
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-        <Card style={{ padding:"22px" }}>
-          <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 16px" }}>⚙️ بيانات الاتصال بـ Odoo</p>
-          {[["رابط الخادم","url","text"],["قاعدة البيانات","database","text"],["اسم المستخدم","username","email"],["كلمة المرور","password","password"]].map(([l,k,type]) => (
-            <div key={k} style={{ marginBottom:12 }}>
-              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>{l}</label>
-              <input type={type} value={(form as any)[k]} onChange={e=>setForm((f:any)=>({...f,[k]:e.target.value}))}
-                style={{ width:"100%", padding:"9px 12px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:k==="url"||k==="database"||k==="username"||k==="password"?"ltr":"rtl", textAlign:"left", boxSizing:"border-box" as any }}/>
+      <PageTitle title="🔗 إعداد وربط Odoo ERP" sub="اختر طريقة الربط المناسبة لشركتك" />
+
+      {/* ── الربط عبر الشركة القابضة (الموصى به) ── */}
+      <Card style={{ padding:"20px 22px", marginBottom:14, border:`2px solid ${C.primary}`, background:C.primaryLight }}>
+        <div style={{ display:"flex", gap:14, alignItems:"flex-start" }}>
+          <div style={{ width:48, height:48, borderRadius:13, background:"linear-gradient(135deg,#2563EB,#0D9488)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, flexShrink:0 }}>🏛️</div>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+              <p style={{ fontWeight:800, fontSize:15, color:C.primary, margin:0 }}>ربط عبر الشركة القابضة</p>
+              <span style={{ padding:"2px 10px", borderRadius:18, background:C.primary, color:"#fff", fontSize:10, fontWeight:700 }}>مُوصى به</span>
+            </div>
+            <p style={{ color:C.textSec, fontSize:13, margin:"0 0 12px", lineHeight:1.7 }}>
+              إذا كان لديك أكثر من شركة في Odoo — قم بإنشاء شركة قابضة وربطها بقاعدة البيانات واستيراد جميع الشركات دفعة واحدة
+            </p>
+            <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+              {groups?.length > 0 ? (
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", flex:1 }}>
+                  {groups.map((g:any) => (
+                    <div key={g.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 14px", borderRadius:9, background:"#fff", border:`1px solid ${g.is_connected?C.teal:C.border}` }}>
+                      <span style={{ fontSize:16 }}>🏛️</span>
+                      <div>
+                        <p style={{ fontWeight:700, color:C.text, margin:0, fontSize:13 }}>{g.name}</p>
+                        <p style={{ color:g.is_connected?C.teal:C.muted, fontSize:11, margin:0 }}>{g.is_connected?"● متصل":""}{g.odoo_database?` | ${g.odoo_database.slice(0,22)}...`:""}</p>
+                      </div>
+                      <Badge label={g.is_connected?"✅ نشط":"○ غير متصل"} bg={g.is_connected?C.greenLight:"#F1F5F9"} color={g.is_connected?C.green:C.muted}/>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ color:C.muted, fontSize:12, margin:0 }}>لا توجد مجموعات قابضة بعد — أنشئ واحدة الآن</p>
+              )}
+              <button onClick={()=>onNavigate("holding")} style={{ padding:"9px 20px", borderRadius:9, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, flexShrink:0, boxShadow:"0 2px 8px rgba(37,99,235,0.3)", whiteSpace:"nowrap" }}>
+                {groups?.length>0?"⚙️ إدارة المجموعات القابضة →":"+ إنشاء شركة قابضة →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ── الربط المباشر لشركة واحدة ── */}
+      <Card style={{ padding:"20px 22px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:14, alignItems:"flex-start" }}>
+          <div style={{ width:48, height:48, borderRadius:13, background:C.tealLight, display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, flexShrink:0 }}>🏢</div>
+          <div style={{ flex:1 }}>
+            <p style={{ fontWeight:800, fontSize:15, color:C.text, margin:"0 0 4px" }}>ربط مباشر لشركة واحدة</p>
+            <p style={{ color:C.textSec, fontSize:13, margin:"0 0 14px", lineHeight:1.7 }}>
+              إذا كان لديك شركة واحدة فقط — اربطها مباشرة بـ Odoo بدون الحاجة لشركة قابضة
+            </p>
+
+            {!companyId ? (
+              <div style={{ padding:"10px 14px", borderRadius:8, background:C.amberLight, border:`1px solid #FDE68A` }}>
+                <p style={{ color:"#92400E", fontSize:12, margin:0 }}>⚠️ اختر شركة من القائمة أعلاه أولاً</p>
+              </div>
+            ) : (
+              <>
+                {/* Current config status */}
+                {config && (
+                  <div style={{ padding:"10px 14px", borderRadius:9, background:C.greenLight, border:`1px solid #A7F3D0`, marginBottom:14 }}>
+                    <p style={{ fontWeight:700, color:C.green, margin:"0 0 2px", fontSize:13 }}>✅ الشركة مربوطة بـ Odoo</p>
+                    <p style={{ color:"#065F46", fontSize:11, margin:0 }}>
+                      الشركة في Odoo: {(config as any)?.odoo_company_name || "—"} |
+                      قاعدة البيانات: {(config as any)?.database?.slice(0,25)}...
+                    </p>
+                  </div>
+                )}
+
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                  {[["رابط الخادم","url","text"],["قاعدة البيانات","database","text"],["اسم المستخدم","username","email"],["كلمة المرور","password","password"]].map(([l,k,type]) => (
+                    <div key={k}>
+                      <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>{l}</label>
+                      <input type={type} value={(form as any)[k]} onChange={e=>setForm((f:any)=>({...f,[k]:e.target.value}))}
+                        style={{ width:"100%", padding:"8px 11px", borderRadius:8, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:"ltr", textAlign:"left", boxSizing:"border-box" as any }}/>
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={handleTest} disabled={step==="testing"} style={{ padding:"10px 22px", borderRadius:9, border:"none", background:step==="testing"?C.muted:"linear-gradient(135deg,#0D9488,#059669)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, display:"inline-flex", alignItems:"center", gap:8 }}>
+                  {step==="testing"?<><Spinner/>جاري الاتصال...</>:"⚡ اختبار الاتصال واكتشاف الشركات"}
+                </button>
+
+                {step==="error" && (
+                  <div style={{ marginTop:10, padding:"10px 14px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12 }}>⚠️ {errorMsg}</div>
+                )}
+
+                {step==="done" && result?.companies && (
+                  <div style={{ marginTop:14 }}>
+                    <div style={{ padding:"10px 14px", borderRadius:8, background:C.greenLight, border:`1px solid #A7F3D0`, marginBottom:10 }}>
+                      <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>✅ تم الاتصال — Odoo v{result.version} | {result.companies.length} شركة</p>
+                    </div>
+                    <p style={{ fontWeight:600, fontSize:13, color:C.text, margin:"0 0 8px" }}>اختر الشركة لهذه الحسابات:</p>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {result.companies.map((c:any) => (
+                        <button key={c.id} onClick={()=>handleSelectCompany(c)}
+                          style={{ padding:"10px 14px", borderRadius:9, border:`1.5px solid ${selectedOdooCompany?.id===c.id?C.teal:C.border}`, background:selectedOdooCompany?.id===c.id?C.tealLight:"#fff", cursor:"pointer", textAlign:"right", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <div>
+                            <p style={{ fontWeight:700, color:selectedOdooCompany?.id===c.id?C.teal:C.text, margin:"0 0 2px", fontSize:13 }}>{c.name}</p>
+                            <p style={{ color:C.muted, margin:0, fontSize:11 }}>{c.currency} | ID:{c.id}{c.city?` | ${c.city}`:""}</p>
+                          </div>
+                          {selectedOdooCompany?.id===c.id && <span style={{ color:C.teal, fontSize:18, fontWeight:700 }}>✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                    {selectedOdooCompany && (
+                      <div style={{ marginTop:10, padding:"10px 14px", borderRadius:8, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+                        <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:13 }}>✅ تم حفظ الإعدادات لشركة: {selectedOdooCompany.name}</p>
+                        <p style={{ color:"#065F46", fontSize:11, margin:"4px 0 0" }}>انتقل الآن إلى "مزامنة الحركات" لاستيراد القيود المحاسبية</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* ── دليل الخطوات ── */}
+      <Card style={{ padding:"18px 22px" }}>
+        <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 14px" }}>📋 مسار العمل الموصى به</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          {[
+            { n:"1", title:"إنشاء شركة قابضة", desc:"من الإدارة → الشركات القابضة → إنشاء جديدة", icon:"🏛️", action:"holding", btn:"اذهب للمجموعات →" },
+            { n:"2", title:"ربط قاعدة بيانات Odoo", desc:"أدخل بيانات الاتصال واكتشف جميع الشركات", icon:"🔗", action:null, btn:null },
+            { n:"3", title:"اختيار الشركات وربطها", desc:"اختر الشركات التابعة وسيتم إنشاؤها تلقائياً", icon:"🏢", action:null, btn:null },
+            { n:"4", title:"مزامنة الحركات", desc:"ابدأ استيراد القيود مع الرصيد الافتتاحي", icon:"🔄", action:"journal-sync", btn:"اذهب للمزامنة →" },
+          ].map((s,i)=>(
+            <div key={i} style={{ padding:"14px", borderRadius:10, background:C.bg, border:`1px solid ${C.border}` }}>
+              <div style={{ display:"flex", gap:10, marginBottom:8, alignItems:"center" }}>
+                <div style={{ width:28, height:28, borderRadius:"50%", background:C.primarySoft, color:C.primary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, flexShrink:0 }}>{s.n}</div>
+                <span style={{ fontSize:18 }}>{s.icon}</span>
+                <p style={{ fontWeight:700, color:C.text, margin:0, fontSize:13 }}>{s.title}</p>
+              </div>
+              <p style={{ fontSize:12, color:C.textSec, margin:"0 0 8px", lineHeight:1.6, paddingRight:38 }}>{s.desc}</p>
+              {s.btn && s.action && (
+                <button onClick={()=>onNavigate(s.action)} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.primary}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:11, fontWeight:700, marginRight:38 }}>
+                  {s.btn}
+                </button>
+              )}
             </div>
           ))}
-          <button onClick={handleTest} disabled={step==="testing"} style={{ width:"100%", padding:"11px", borderRadius:10, border:"none", background:step==="testing"?C.muted:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginTop:4 }}>
-            {step==="testing" ? <><Spinner/> جاري الاتصال...</> : "⚡ اختبار الاتصال واكتشاف الشركات"}
-          </button>
-          {step==="error" && <div style={{ marginTop:10, padding:"10px 14px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12 }}>⚠️ {errorMsg}</div>}
-        </Card>
-
-        <div>
-          {step==="selecting" && result?.companies && (
-            <Card style={{ padding:"22px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, padding:"10px 12px", borderRadius:8, background:C.greenLight, border:`1px solid #A7F3D0` }}>
-                <span style={{ color:C.green, fontSize:18 }}>✅</span>
-                <div>
-                  <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>تم الاتصال — Odoo v{result.version}</p>
-                  <p style={{ color:"#065F46", margin:0, fontSize:11 }}>{result.companies.length} شركة متاحة في قاعدة البيانات</p>
-                </div>
-              </div>
-              <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>🏢 اختر الشركة التي تريد مزامنتها:</p>
-              <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:300, overflowY:"auto" }}>
-                {result.companies.map((c:any, i:number) => (
-                  <button key={c.id} onClick={() => handleSelectCompany(c)} style={{ padding:"12px 14px", borderRadius:10, border:`1.5px solid ${C.border}`, background:C.bg, cursor:"pointer", textAlign:"right", transition:"all 0.15s", display:"flex", justifyContent:"space-between", alignItems:"center" }}
-                    onMouseEnter={e=>{(e.currentTarget as any).style.background=C.primaryLight;(e.currentTarget as any).style.borderColor=C.primary;}}
-                    onMouseLeave={e=>{(e.currentTarget as any).style.background=C.bg;(e.currentTarget as any).style.borderColor=C.border;}}>
-                    <div>
-                      <p style={{ fontWeight:700, color:C.text, margin:"0 0 2px", fontSize:13 }}>{c.name}</p>
-                      <p style={{ color:C.muted, margin:0, fontSize:11 }}>
-                        {c.currency && <span style={{ marginLeft:8 }}>💱 {c.currency}</span>}
-                        {c.city && <span>📍 {c.city}</span>}
-                      </p>
-                    </div>
-                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                      <span style={{ padding:"2px 8px", borderRadius:18, background:C.primaryLight, color:C.primary, fontSize:10, fontWeight:700 }}>ID: {c.id}</span>
-                      <span style={{ color:C.primary, fontSize:16 }}>←</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {step==="done" && selectedOdooCompany && (
-            <Card style={{ padding:"22px", background:C.greenLight, border:`1px solid #A7F3D0` }}>
-              <p style={{ fontWeight:800, fontSize:14, color:C.green, margin:"0 0 14px" }}>✅ تم الربط بنجاح!</p>
-              <div style={{ padding:"14px", borderRadius:10, background:"rgba(255,255,255,0.8)", marginBottom:10 }}>
-                <p style={{ fontSize:11, color:C.textSec, margin:"0 0 4px" }}>الشركة المختارة من Odoo</p>
-                <p style={{ fontSize:16, fontWeight:800, color:C.green, margin:0 }}>🏢 {selectedOdooCompany.name}</p>
-                {selectedOdooCompany.currency && <p style={{ color:C.textSec, fontSize:12, margin:"4px 0 0" }}>العملة: {selectedOdooCompany.currency}</p>}
-              </div>
-              <p style={{ fontSize:12, color:"#065F46", margin:0, fontWeight:600 }}>✓ تم الحفظ — الآن اذهب لصفحة "مزامنة الحركات" لاستيراد البيانات</p>
-            </Card>
-          )}
-
-          {(step==="idle" || step==="error") && (
-            <Card style={{ padding:"22px" }}>
-              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 12px" }}>📋 كيف يعمل الربط؟</p>
-              {[
-                ["1","اضغط اختبار الاتصال — سيتصل بـ Odoo ويكتشف كل الشركات"],
-                ["2","اختر الشركة التي تريد مزامنة بياناتها"],
-                ["3","انتقل لصفحة مزامنة الحركات لاستيراد القيود مع الرصيد الافتتاحي"],
-                ["4","جميع التقارير ستعمل تلقائياً بالبيانات الحقيقية"],
-              ].map(([n,t])=>(
-                <div key={n} style={{ display:"flex", gap:10, marginBottom:10 }}>
-                  <div style={{ width:24, height:24, borderRadius:"50%", background:C.primarySoft, color:C.primary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, flexShrink:0 }}>{n}</div>
-                  <p style={{ fontSize:12, color:C.textSec, margin:0, lineHeight:1.6 }}>{t}</p>
-                </div>
-              ))}
-            </Card>
-          )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
+
 
 function JournalSyncPage({ companyId }:any) {
   const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear()}-01-01`);
@@ -1837,7 +1915,7 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co}/>;
-      case "odoo-setup":        return <OdooSetupPage companyId={companyId} co={co}/>;
+      case "odoo-setup":        return <OdooSetupPage companyId={companyId} co={co} onNavigate={setPage}/>;
       case "journal-sync":      return <JournalSyncPage companyId={companyId}/>;
       case "trial-balance":     return <TrialBalancePage companyId={companyId}/>;
       case "income":            return <IncomePage companyId={companyId}/>;
