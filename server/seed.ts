@@ -81,3 +81,11 @@ async function seed() {
 }
 
 seed().catch(e => { console.error(e); process.exit(1); });
+
+// Add new columns if they don't exist (migration)
+async function migrate() {
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_id INTEGER`); } catch {}
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_name TEXT`); } catch {}
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0`); } catch {}
+}
+migrate().catch(() => {});

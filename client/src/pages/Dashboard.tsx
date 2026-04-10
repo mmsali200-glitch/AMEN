@@ -93,71 +93,102 @@ function DashboardPage({ companyId, co }:any) {
 // ── Odoo Setup ─────────────────────────────────────────────────────────────────
 function OdooSetupPage({ companyId, co }:any) {
   const [form, setForm] = useState({ url:"https://onesolutionc-roma.odoo.com", database:"onesolutionc-roma-main-17095422", username:"admin@admin.com", password:"KMM9999" });
-  const [step, setStep] = useState<"idle"|"testing"|"done"|"error">("idle");
+  const [step, setStep] = useState<"idle"|"testing"|"selecting"|"done"|"error">("idle");
   const [result, setResult] = useState<any>(null);
+  const [selectedOdooCompany, setSelectedOdooCompany] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const saveConfig = trpc.odoo.saveConfig.useMutation();
-  const testConn = trpc.odoo.testConnection.useMutation();
+  const testDiscover = trpc.odoo.testAndDiscover.useMutation();
 
-  const handleTest = async () => {
-    if (!companyId) return alert("اختر شركة أولاً");
-    setStep("testing"); setErrorMsg("");
-    testConn.mutate(form, {
-      onSuccess: async (data) => {
-        setResult(data); setStep("done");
-        await saveConfig.mutateAsync({ companyId, ...form });
-      },
+  const handleTest = () => {
+    if (!companyId) return alert("اختر شركة من النظام أولاً");
+    setStep("testing"); setErrorMsg(""); setResult(null); setSelectedOdooCompany(null);
+    testDiscover.mutate(form, {
+      onSuccess: (data) => { setResult(data); setStep("selecting"); },
       onError: (err) => { setStep("error"); setErrorMsg(err.message); }
     });
   };
 
+  const handleSelectCompany = async (odooCompany: any) => {
+    setSelectedOdooCompany(odooCompany);
+    await saveConfig.mutateAsync({ companyId, ...form, odooCompanyId: odooCompany.id, odooCompanyName: odooCompany.name });
+    setStep("done");
+  };
+
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      <PageTitle title="🔗 إعداد وربط Odoo ERP" sub="اربط شركتك بـ Odoo لاستيراد البيانات المحاسبية تلقائياً" />
-
+      <PageTitle title="🔗 إعداد وربط Odoo ERP" sub="اربط شركتك بـ Odoo لاستيراد جميع البيانات المحاسبية" />
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
         <Card style={{ padding:"22px" }}>
-          <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 16px" }}>⚙️ بيانات الاتصال</p>
+          <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 16px" }}>⚙️ بيانات الاتصال بـ Odoo</p>
           {[["رابط الخادم","url","text"],["قاعدة البيانات","database","text"],["اسم المستخدم","username","email"],["كلمة المرور","password","password"]].map(([l,k,type]) => (
             <div key={k} style={{ marginBottom:12 }}>
               <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>{l}</label>
               <input type={type} value={(form as any)[k]} onChange={e=>setForm((f:any)=>({...f,[k]:e.target.value}))}
-                style={{ width:"100%", padding:"9px 12px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:"ltr", textAlign:"left", boxSizing:"border-box" as any }}/>
+                style={{ width:"100%", padding:"9px 12px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:k==="url"||k==="database"||k==="username"||k==="password"?"ltr":"rtl", textAlign:"left", boxSizing:"border-box" as any }}/>
             </div>
           ))}
           <button onClick={handleTest} disabled={step==="testing"} style={{ width:"100%", padding:"11px", borderRadius:10, border:"none", background:step==="testing"?C.muted:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginTop:4 }}>
-            {step==="testing" ? <><Spinner/> جاري الاتصال...</> : "⚡ اختبار الاتصال وحفظ"}
+            {step==="testing" ? <><Spinner/> جاري الاتصال...</> : "⚡ اختبار الاتصال واكتشاف الشركات"}
           </button>
           {step==="error" && <div style={{ marginTop:10, padding:"10px 14px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12 }}>⚠️ {errorMsg}</div>}
         </Card>
 
         <div>
-          {step==="done" && result && (
-            <Card style={{ padding:"22px", background:C.greenLight, border:`1px solid #A7F3D0` }}>
-              <p style={{ fontWeight:800, fontSize:14, color:C.green, margin:"0 0 14px" }}>✅ تم الاتصال بنجاح!</p>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                <div style={{ padding:"8px 12px", borderRadius:8, background:"rgba(255,255,255,0.7)" }}>
-                  <p style={{ fontSize:11, color:C.textSec, margin:"0 0 2px" }}>إصدار Odoo</p>
-                  <p style={{ fontSize:14, fontWeight:700, color:C.green, margin:0 }}>{result.version}</p>
+          {step==="selecting" && result?.companies && (
+            <Card style={{ padding:"22px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, padding:"10px 12px", borderRadius:8, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+                <span style={{ color:C.green, fontSize:18 }}>✅</span>
+                <div>
+                  <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>تم الاتصال — Odoo v{result.version}</p>
+                  <p style={{ color:"#065F46", margin:0, fontSize:11 }}>{result.companies.length} شركة متاحة في قاعدة البيانات</p>
                 </div>
-                <div style={{ padding:"8px 12px", borderRadius:8, background:"rgba(255,255,255,0.7)" }}>
-                  <p style={{ fontSize:11, color:C.textSec, margin:"0 0 6px" }}>الشركات المتاحة</p>
-                  {result.companies?.map((c:any) => (
-                    <div key={c.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"4px 0", borderBottom:`1px solid #D1FAE5` }}>
-                      <span style={{ fontSize:12, color:C.text, fontWeight:600 }}>{c.name}</span>
-                      <span style={{ fontSize:10, color:C.green, background:"#D1FAE5", padding:"1px 6px", borderRadius:10 }}>ID: {c.id}</span>
+              </div>
+              <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>🏢 اختر الشركة التي تريد مزامنتها:</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:300, overflowY:"auto" }}>
+                {result.companies.map((c:any, i:number) => (
+                  <button key={c.id} onClick={() => handleSelectCompany(c)} style={{ padding:"12px 14px", borderRadius:10, border:`1.5px solid ${C.border}`, background:C.bg, cursor:"pointer", textAlign:"right", transition:"all 0.15s", display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                    onMouseEnter={e=>{(e.currentTarget as any).style.background=C.primaryLight;(e.currentTarget as any).style.borderColor=C.primary;}}
+                    onMouseLeave={e=>{(e.currentTarget as any).style.background=C.bg;(e.currentTarget as any).style.borderColor=C.border;}}>
+                    <div>
+                      <p style={{ fontWeight:700, color:C.text, margin:"0 0 2px", fontSize:13 }}>{c.name}</p>
+                      <p style={{ color:C.muted, margin:0, fontSize:11 }}>
+                        {c.currency && <span style={{ marginLeft:8 }}>💱 {c.currency}</span>}
+                        {c.city && <span>📍 {c.city}</span>}
+                      </p>
                     </div>
-                  ))}
-                </div>
-                <p style={{ fontSize:12, color:C.green, margin:"4px 0 0", fontWeight:600 }}>✓ تم حفظ الإعدادات — اذهب لمزامنة الحركات الآن</p>
+                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                      <span style={{ padding:"2px 8px", borderRadius:18, background:C.primaryLight, color:C.primary, fontSize:10, fontWeight:700 }}>ID: {c.id}</span>
+                      <span style={{ color:C.primary, fontSize:16 }}>←</span>
+                    </div>
+                  </button>
+                ))}
               </div>
             </Card>
           )}
-          {step==="idle" && (
+
+          {step==="done" && selectedOdooCompany && (
+            <Card style={{ padding:"22px", background:C.greenLight, border:`1px solid #A7F3D0` }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.green, margin:"0 0 14px" }}>✅ تم الربط بنجاح!</p>
+              <div style={{ padding:"14px", borderRadius:10, background:"rgba(255,255,255,0.8)", marginBottom:10 }}>
+                <p style={{ fontSize:11, color:C.textSec, margin:"0 0 4px" }}>الشركة المختارة من Odoo</p>
+                <p style={{ fontSize:16, fontWeight:800, color:C.green, margin:0 }}>🏢 {selectedOdooCompany.name}</p>
+                {selectedOdooCompany.currency && <p style={{ color:C.textSec, fontSize:12, margin:"4px 0 0" }}>العملة: {selectedOdooCompany.currency}</p>}
+              </div>
+              <p style={{ fontSize:12, color:"#065F46", margin:0, fontWeight:600 }}>✓ تم الحفظ — الآن اذهب لصفحة "مزامنة الحركات" لاستيراد البيانات</p>
+            </Card>
+          )}
+
+          {(step==="idle" || step==="error") && (
             <Card style={{ padding:"22px" }}>
-              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 12px" }}>📋 التعليمات</p>
-              {[["1","تأكد من اختيار الشركة الصحيحة أعلاه"],["2","البيانات محملة مسبقاً من Odoo الخاص بك"],["3","اضغط \"اختبار الاتصال\" للتحقق والحفظ"],["4","بعد النجاح انتقل لصفحة \"مزامنة الحركات\""]].map(([n,t])=>(
-                <div key={n} style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start" }}>
+              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 12px" }}>📋 كيف يعمل الربط؟</p>
+              {[
+                ["1","اضغط اختبار الاتصال — سيتصل بـ Odoo ويكتشف كل الشركات"],
+                ["2","اختر الشركة التي تريد مزامنة بياناتها"],
+                ["3","انتقل لصفحة مزامنة الحركات لاستيراد القيود مع الرصيد الافتتاحي"],
+                ["4","جميع التقارير ستعمل تلقائياً بالبيانات الحقيقية"],
+              ].map(([n,t])=>(
+                <div key={n} style={{ display:"flex", gap:10, marginBottom:10 }}>
                   <div style={{ width:24, height:24, borderRadius:"50%", background:C.primarySoft, color:C.primary, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, flexShrink:0 }}>{n}</div>
                   <p style={{ fontSize:12, color:C.textSec, margin:0, lineHeight:1.6 }}>{t}</p>
                 </div>
@@ -170,12 +201,11 @@ function OdooSetupPage({ companyId, co }:any) {
   );
 }
 
-// ── Journal Sync ───────────────────────────────────────────────────────────────
 function JournalSyncPage({ companyId }:any) {
   const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [dateTo, setDateTo] = useState(`${new Date().getFullYear()}-12-31`);
-  const [odooCompanyId, setOdooCompanyId] = useState<number|null>(null);
   const [syncType, setSyncType] = useState("incremental");
+  const [includeOpening, setIncludeOpening] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [log, setLog] = useState<string[]>([]);
@@ -183,7 +213,8 @@ function JournalSyncPage({ companyId }:any) {
   const [syncResult, setSyncResult] = useState<any>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const { data:sync, refetch } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId, refetchInterval:done?false:5000 });
+  const { data:sync, refetch } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId });
+  const { data:config } = trpc.odoo.getConfig.useQuery({ companyId }, { enabled:!!companyId });
   const syncMutation = trpc.odoo.syncJournals.useMutation();
 
   useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [log]);
@@ -192,22 +223,38 @@ function JournalSyncPage({ companyId }:any) {
 
   const handleSync = async () => {
     if (!companyId) return;
+    if (!config?.odoo_company_id && !(config as any)?.odooCompanyId) {
+      alert("⚠️ لم يتم اختيار شركة Odoo — اذهب لصفحة الإعداد أولاً واختر الشركة");
+      return;
+    }
+    const odooCompanyId = (config as any)?.odoo_company_id || (config as any)?.odooCompanyId;
+
     setSyncing(true); setDone(false); setProgress(0); setLog([]);
     addLog("🔗 جاري الاتصال بـ Odoo...");
-    setProgress(10);
-    setTimeout(() => { addLog("✓ تم المصادقة بنجاح"); setProgress(20); }, 800);
-    setTimeout(() => { addLog("📥 جاري جلب القيود المحاسبية..."); setProgress(35); }, 1500);
-    setTimeout(() => { addLog("⚙️ معالجة سطور القيود..."); setProgress(55); }, 2500);
-    setTimeout(() => { addLog("💾 حفظ البيانات في قاعدة البيانات..."); setProgress(75); }, 3500);
+    setProgress(5);
 
-    syncMutation.mutate({ companyId, odooCompanyId, dateFrom, dateTo, syncType }, {
+    const progressInterval = setInterval(() => {
+      setProgress(p => p < 85 ? p + Math.random() * 8 : p);
+    }, 1500);
+
+    setTimeout(() => addLog("✅ تم المصادقة بنجاح"), 800);
+    setTimeout(() => addLog(`📥 جاري جلب القيود من ${dateFrom} إلى ${dateTo}...`), 1500);
+    if (includeOpening) setTimeout(() => addLog("📊 جاري حساب الأرصدة الافتتاحية لجميع الحسابات..."), 2500);
+    setTimeout(() => addLog("⚙️ معالجة سطور القيود وتصنيف الحسابات..."), 3500);
+    setTimeout(() => addLog("💾 حفظ البيانات في قاعدة البيانات..."), 5000);
+
+    syncMutation.mutate({ companyId, odooCompanyId, dateFrom, dateTo, syncType, includeOpeningBalance: includeOpening }, {
       onSuccess: (data) => {
+        clearInterval(progressInterval);
         setProgress(100);
-        addLog(`✅ اكتملت المزامنة — ${data.inserted} قيد محاسبي`);
+        addLog(`✅ اكتملت المزامنة!`);
+        addLog(`📋 تم استيراد ${data.inserted} قيد للفترة المحددة`);
+        if (data.openingLines > 0) addLog(`📊 تم معالجة ${data.openingLines} سطر للرصيد الافتتاحي`);
         setSyncResult(data); setDone(true); setSyncing(false);
         refetch();
       },
       onError: (err) => {
+        clearInterval(progressInterval);
         addLog(`❌ خطأ: ${err.message}`);
         setSyncing(false); setProgress(0);
       }
@@ -216,78 +263,139 @@ function JournalSyncPage({ companyId }:any) {
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      <PageTitle title="🔄 مزامنة الحركات المحاسبية" sub="استيراد القيود من Odoo إلى النظام" />
+      <PageTitle title="🔄 مزامنة الحركات المحاسبية" sub="استيراد القيود من Odoo مع الأرصدة الافتتاحية" />
 
-      {/* Stats */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:16 }}>
-        {[{l:"القيود المحاسبية",v:fmt(sync?.totalEntries||0),c:C.primary,bg:C.primaryLight},{l:"سطور القيود",v:fmt(sync?.totalLines||0),c:C.teal,bg:C.tealLight},{l:"آخر مزامنة",v:sync?.lastSync?.startedAt?new Date(sync.lastSync.startedAt).toLocaleDateString("ar"):"لم تتم",c:C.purple,bg:C.purpleLight}].map((s,i)=>(
-          <Card key={i} style={{ padding:"14px 16px", display:"flex", gap:10, alignItems:"center" }}>
-            <div style={{ flex:1 }}>
-              <p style={{ color:C.muted, fontSize:10, margin:"0 0 3px" }}>{s.l}</p>
-              <p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
+      {/* الشركة المربوطة */}
+      {config && (
+        <Card style={{ padding:"12px 16px", marginBottom:14, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ fontSize:20 }}>🏢</span>
+            <div>
+              <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>الشركة المربوطة: {(config as any)?.odoo_company_name || "—"}</p>
+              <p style={{ color:"#065F46", margin:0, fontSize:11 }}>{(config as any)?.url} | {(config as any)?.database}</p>
             </div>
+          </div>
+        </Card>
+      )}
+
+      {!config && (
+        <Card style={{ padding:"14px 16px", marginBottom:14, background:C.amberLight, border:`1px solid #FDE68A` }}>
+          <p style={{ color:"#92400E", margin:0, fontSize:13 }}>⚠️ لم يتم إعداد Odoo بعد — اذهب لصفحة "إعداد وربط Odoo" أولاً واختر الشركة</p>
+        </Card>
+      )}
+
+      {/* إحصاءات */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:16 }}>
+        {[
+          {l:"القيود المحاسبية",v:fmt(sync?.totalEntries||0),c:C.primary,bg:C.primaryLight},
+          {l:"سطور القيود",v:fmt(sync?.totalLines||0),c:C.teal,bg:C.tealLight},
+          {l:"آخر مزامنة",v:sync?.lastSync?.started_at||sync?.lastSync?.startedAt?new Date(sync.lastSync.started_at||sync.lastSync.startedAt).toLocaleDateString("ar"):"لم تتم",c:C.purple,bg:C.purpleLight},
+        ].map((s,i)=>(
+          <Card key={i} style={{ padding:"14px 16px" }}>
+            <p style={{ color:C.muted, fontSize:10, margin:"0 0 3px" }}>{s.l}</p>
+            <p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
           </Card>
         ))}
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
         <Card style={{ padding:"20px" }}>
-          <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 14px" }}>إعدادات المزامنة</p>
+          <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 14px" }}>⚙️ إعدادات المزامنة</p>
+
           <div style={{ marginBottom:12 }}>
             <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>نوع المزامنة</label>
             <select value={syncType} onChange={e=>setSyncType(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
-              <option value="incremental">تزايدية (الجديدة فقط)</option>
-              <option value="full">كاملة (إعادة بناء كامل)</option>
+              <option value="incremental">تزايدية — إضافة الجديد فقط</option>
+              <option value="full">كاملة — إعادة بناء كامل (يمسح القديم)</option>
             </select>
           </div>
+
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
-            <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>من تاريخ</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none" }}/></div>
-            <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>إلى تاريخ</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none" }}/></div>
+            <div>
+              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>من تاريخ</label>
+              <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none" }}/>
+            </div>
+            <div>
+              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>إلى تاريخ</label>
+              <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none" }}/>
+            </div>
           </div>
-          <button onClick={handleSync} disabled={syncing||!companyId} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:syncing?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:syncing||!companyId?"default":"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            {syncing?<><Spinner/>جاري المزامنة...</>:"▶ بدء المزامنة"}
+
+          {/* خيار الرصيد الافتتاحي */}
+          <label onClick={()=>setIncludeOpening(o=>!o)} style={{ display:"flex", gap:10, padding:"12px 14px", borderRadius:9, border:`1.5px solid ${includeOpening?C.primary:C.border}`, background:includeOpening?C.primaryLight:C.bg, cursor:"pointer", marginBottom:14, transition:"all 0.15s" }}>
+            <div style={{ width:18, height:18, borderRadius:4, border:`2px solid ${includeOpening?C.primary:C.muted}`, background:includeOpening?C.primary:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
+              {includeOpening && <span style={{ color:"#fff", fontSize:11, fontWeight:800 }}>✓</span>}
+            </div>
+            <div>
+              <p style={{ fontSize:12, fontWeight:700, color:includeOpening?C.primary:C.text, margin:"0 0 2px" }}>✅ تضمين الرصيد الافتتاحي (مهم)</p>
+              <p style={{ fontSize:11, color:C.textSec, margin:0, lineHeight:1.5 }}>يحسب أرصدة جميع الحسابات قبل فترة المزامنة ويخزّنها كرصيد افتتاحي — ضروري لصحة ميزان المراجعة</p>
+            </div>
+          </label>
+
+          <button onClick={handleSync} disabled={syncing||!companyId||!config} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:syncing||!config?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:syncing||!config?"default":"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {syncing ? <><Spinner/>جاري المزامنة...</> : "▶ بدء المزامنة"}
           </button>
 
-          {/* Progress */}
           {(syncing||done) && (
             <div style={{ marginTop:14 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                <span style={{ fontSize:12, color:C.textSec, fontWeight:600 }}>التقدم</span>
-                <span style={{ fontSize:12, color:done?C.green:C.primary, fontWeight:700 }}>{progress}%</span>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                <span style={{ fontSize:12, color:C.textSec }}>التقدم</span>
+                <span style={{ fontSize:12, color:done?C.green:C.primary, fontWeight:700 }}>{Math.round(progress)}%</span>
               </div>
-              <div style={{ background:"#F1F5F9", borderRadius:6, height:8, overflow:"hidden" }}>
-                <div style={{ width:`${progress}%`, height:"100%", background:done?"linear-gradient(90deg,#059669,#0D9488)":"linear-gradient(90deg,#2563EB,#0D9488)", borderRadius:6, transition:"width 0.5s ease" }}/>
+              <div style={{ background:"#F1F5F9", borderRadius:6, height:8 }}>
+                <div style={{ width:`${progress}%`, height:"100%", background:done?"linear-gradient(90deg,#059669,#0D9488)":"linear-gradient(90deg,#2563EB,#0D9488)", borderRadius:6, transition:"width 0.5s" }}/>
               </div>
             </div>
           )}
         </Card>
 
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          {/* Log terminal */}
           {log.length > 0 && (
             <Card style={{ background:"#0F172A", flex:1 }}>
               <div style={{ padding:"10px 14px 6px", borderBottom:"1px solid rgba(255,255,255,0.1)" }}>
                 <span style={{ fontSize:11, color:"#94A3B8", fontWeight:600 }}>● سجل العمليات</span>
               </div>
-              <div ref={logRef} style={{ padding:"10px 14px", maxHeight:180, overflowY:"auto", display:"flex", flexDirection:"column", gap:4 }}>
+              <div ref={logRef} style={{ padding:"10px 14px", maxHeight:200, overflowY:"auto", display:"flex", flexDirection:"column", gap:3 }}>
                 {log.map((l,i) => (
-                  <p key={i} style={{ fontSize:11, color:l.includes("✅")?"#34D399":l.includes("❌")?"#F87171":"#CBD5E1", margin:0, fontFamily:"monospace" }}>{l}</p>
+                  <p key={i} style={{ fontSize:11, color:l.includes("✅")?"#34D399":l.includes("❌")?"#F87171":l.includes("📊")||l.includes("📋")?"#60A5FA":"#CBD5E1", margin:0, fontFamily:"monospace" }}>{l}</p>
                 ))}
               </div>
             </Card>
           )}
 
           {done && syncResult && (
-            <Card style={{ background:C.greenLight, border:`1px solid #A7F3D0`, padding:"16px 18px" }}>
-              <p style={{ fontWeight:800, fontSize:13, color:C.green, margin:"0 0 10px" }}>✅ اكتملت المزامنة!</p>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8 }}>
-                {[{l:"القيود المستوردة",v:fmt(syncResult.inserted||0)},{l:"إجمالي الكلي",v:fmt(syncResult.total||0)}].map((s,i)=>(
+            <Card style={{ background:C.greenLight, border:`1px solid #A7F3D0`, padding:"18px" }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.green, margin:"0 0 12px" }}>✅ اكتملت المزامنة!</p>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
+                {[
+                  {l:"قيود الفترة",v:fmt(syncResult.inserted||0)},
+                  {l:"إجمالي Odoo",v:fmt(syncResult.total||0)},
+                  {l:"سطور افتتاحية",v:fmt(syncResult.openingLines||0)},
+                  {l:"في قاعدة البيانات",v:fmt(sync?.totalEntries||0)},
+                ].map((s,i)=>(
                   <div key={i} style={{ padding:"10px", borderRadius:8, background:"rgba(255,255,255,0.7)", textAlign:"center" }}>
                     <p style={{ fontSize:16, fontWeight:800, color:C.green, margin:"0 0 2px" }}>{s.v}</p>
                     <p style={{ fontSize:10, color:C.textSec, margin:0 }}>{s.l}</p>
                   </div>
                 ))}
               </div>
+              <p style={{ fontSize:12, color:C.green, margin:0, fontWeight:600 }}>🎉 يمكنك الآن الاطلاع على جميع التقارير المالية</p>
+            </Card>
+          )}
+
+          {!syncing && !done && (
+            <Card style={{ padding:"18px" }}>
+              <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>📌 ملاحظات مهمة</p>
+              {[
+                "الرصيد الافتتاحي يُحسب تلقائياً من جميع الحركات قبل تاريخ البداية",
+                "ميزان المراجعة سيعرض: افتتاحي + حركة الفترة + ختامي",
+                "يُنصح بمزامنة كاملة في أول مرة ثم تزايدية بعدها",
+                "يمكن مزامنة فترات مختلفة (شهر، ربع، سنة) حسب الحاجة",
+              ].map((t,i)=>(
+                <p key={i} style={{ fontSize:12, color:C.textSec, margin:"0 0 8px", display:"flex", gap:8 }}>
+                  <span style={{ color:C.teal, fontWeight:700, flexShrink:0 }}>✓</span>{t}
+                </p>
+              ))}
             </Card>
           )}
         </div>
@@ -296,7 +404,6 @@ function JournalSyncPage({ companyId }:any) {
   );
 }
 
-// ── Trial Balance ──────────────────────────────────────────────────────────────
 function TrialBalancePage({ companyId }:any) {
   const year = new Date().getFullYear();
   const [dateFrom, setDateFrom] = useState(`${year}-01-01`);
