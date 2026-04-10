@@ -346,17 +346,29 @@ const odooRouter = router({
         const moveIds = moves.map((m:any) => m.id);
         const lines = await conn.getJournalLines(moveIds);
 
-        for (const line of lines) {
-          const entryRow = await db.run(sql`SELECT id FROM journal_entries WHERE company_id = ${input.companyId} AND odoo_move_id = ${line.move_id[0]} LIMIT 1`);
+        // بناء map سريع لـ move.id → entry.id
+        const moveToEntry: Record<number, number> = {};
+        for (const move of moves) {
+          const entryRow = await db.run(sql`SELECT id FROM journal_entries WHERE company_id = ${input.companyId} AND odoo_move_id = ${move.id} LIMIT 1`);
           const entryId = (entryRow as any).rows?.[0]?.id;
+          if (entryId) moveToEntry[move.id] = entryId;
+        }
+
+        for (const line of lines) {
+          const moveId = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
+          const entryId = moveToEntry[moveId];
           if (!entryId) continue;
 
-          const accountCode = Array.isArray(line.account_id) ? line.account_id[1]?.split(" ")[0] || "0000" : "0000";
-          const accountName = Array.isArray(line.account_id) ? (line.account_id[1]||"").replace(/^\S+\s/, "") : "";
+          const accountCode = Array.isArray(line.account_id) ? (line.account_id[1]||"").split(" ")[0] || "0000" : "0000";
+          const accountName = Array.isArray(line.account_id) ? (line.account_id[1]||"").replace(/^\S+\s+/, "") : "";
           const accountType = classifyAccount(accountCode, accountName);
           const partnerName = Array.isArray(line.partner_id) ? line.partner_id[1] || "" : "";
+          // التاريخ: من السطر أو من القيد الأب
+          const lineDate = line.date || (moves.find((m:any)=>m.id===moveId)?.date) || input.dateFrom;
 
-          await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date) VALUES (${entryId}, ${input.companyId}, ${accountCode}, ${accountName}, ${accountType}, ${partnerName}, ${line.name||""}, ${line.debit||0}, ${line.credit||0}, ${line.date||move.date})`);
+          await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines
+            (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date)
+            VALUES (${entryId}, ${input.companyId}, ${accountCode}, ${accountName}, ${accountType}, ${partnerName}, ${line.name||""}, ${line.debit||0}, ${line.credit||0}, ${lineDate})`);
         }
 
         totalInserted += moves.length;
@@ -926,6 +938,84 @@ const groupsRouter = router({
     }),
 });
 
+
+// ── Debug / Verify ─────────────────────────────────────────────────────────────
+const debugRouter = router({
+  // فحص حالة البيانات لشركة
+  checkData: protectedProcedure
+    .input(z.object({ companyId:z.number() }))
+    .query(async ({ input }) => {
+      const [entries]  = await db.select({ n:sql<number>`count(*)` }).from(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.companyId));
+      const [lines]    = await db.select({ n:sql<number>`count(*)` }).from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.companyId));
+      const [nullDate] = await db.select({ n:sql<number>`count(*)` }).from(schema.journalEntryLines).where(and(eq(schema.journalEntryLines.companyId, input.companyId), sql`(date IS NULL OR date = '')`));
+      const [nullEntry]= await db.select({ n:sql<number>`count(*)` }).from(schema.journalEntryLines).where(and(eq(schema.journalEntryLines.companyId, input.companyId), sql`journal_entry_id NOT IN (SELECT id FROM journal_entries WHERE company_id=${input.companyId})`));
+
+      const sampleLines = await db.select({
+        id: schema.journalEntryLines.id,
+        entryId: schema.journalEntryLines.journalEntryId,
+        accountCode: schema.journalEntryLines.accountCode,
+        accountType: schema.journalEntryLines.accountType,
+        debit: schema.journalEntryLines.debit,
+        credit: schema.journalEntryLines.credit,
+        date: schema.journalEntryLines.date,
+      }).from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.companyId)).limit(5);
+
+      const typeBreakdown = await db.select({
+        accountType: schema.journalEntryLines.accountType,
+        cnt: sql<number>`count(*)`,
+        totalDebit: sql<number>`sum(debit)`,
+        totalCredit: sql<number>`sum(credit)`,
+      }).from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.companyId)).groupBy(schema.journalEntryLines.accountType);
+
+      const co = await db.select().from(schema.companies).where(eq(schema.companies.id, input.companyId)).limit(1);
+      const cfg = await db.run(sql`SELECT company_id, url, odoo_company_id, odoo_company_name FROM odoo_configs WHERE company_id=${input.companyId} LIMIT 1`);
+
+      return {
+        company: co[0] || null,
+        odooConfig: (cfg as any).rows?.[0] || null,
+        journalEntries: entries.n,
+        journalLines: lines.n,
+        linesWithNoDate: nullDate.n,
+        linesWithNoEntry: nullEntry.n,
+        sampleLines,
+        typeBreakdown,
+        isHealthy: entries.n > 0 && lines.n > 0 && nullDate.n === 0,
+      };
+    }),
+
+  // إصلاح التواريخ الفارغة في journal_entry_lines
+  fixDates: adminProcedure
+    .input(z.object({ companyId:z.number() }))
+    .mutation(async ({ input }) => {
+      // نسخ التاريخ من journal_entries إلى journal_entry_lines الفارغة
+      const result = await db.run(sql`
+        UPDATE journal_entry_lines
+        SET date = (SELECT date FROM journal_entries WHERE journal_entries.id = journal_entry_lines.journal_entry_id)
+        WHERE company_id = ${input.companyId}
+        AND (date IS NULL OR date = '')
+      `);
+      return { fixed:(result as any).rowsAffected || 0 };
+    }),
+
+  // إصلاح account_type الفارغ
+  fixAccountTypes: adminProcedure
+    .input(z.object({ companyId:z.number() }))
+    .mutation(async ({ input }) => {
+      const lines = await db.select({ id:schema.journalEntryLines.id, accountCode:schema.journalEntryLines.accountCode, accountName:schema.journalEntryLines.accountName })
+        .from(schema.journalEntryLines)
+        .where(and(eq(schema.journalEntryLines.companyId, input.companyId), sql`(account_type IS NULL OR account_type = '' OR account_type = 'other')`));
+
+      let fixed = 0;
+      for (const line of lines) {
+        const type = classifyAccount(line.accountCode, line.accountName||"");
+        if (type !== "other") {
+          await db.update(schema.journalEntryLines).set({ accountType:type }).where(eq(schema.journalEntryLines.id, line.id));
+          fixed++;
+        }
+      }
+      return { fixed };
+    }),
+});
 export const appRouter = router({
   auth: authRouter,
   company: companyRouter,
@@ -935,5 +1025,6 @@ export const appRouter = router({
   ai: aiRouter,
   audit: auditRouter,
   groups: groupsRouter,
+  debug: debugRouter,
 });
 export type AppRouter = typeof appRouter;

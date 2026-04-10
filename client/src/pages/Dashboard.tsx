@@ -18,7 +18,7 @@ const NAV = [
   { s:"القوائم المالية", items:[{id:"trial-balance",  label:"ميزان المراجعة",     icon:"⚖️"},{id:"income",label:"قائمة الدخل",icon:"📈"},{id:"balance-sheet",label:"الميزانية العمومية",icon:"🏦"},{id:"cashflow",label:"التدفقات النقدية",icon:"💵"}]},
   { s:"التحليل",         items:[{id:"ratios",         label:"النسب المالية",      icon:"📉"},{id:"monthly",label:"التحليل الشهري",icon:"📅"}]},
   { s:"الذكاء AI",       items:[{id:"advisor",        label:"المستشار AI ✦",      icon:"🤖"},{id:"chatbot",label:"شات بوت مالي",icon:"💬"}]},
-  { s:"الإدارة",         items:[{id:"holding",label:"الشركات القابضة",icon:"🏛️"},{id:"users",label:"المستخدمون",icon:"👥"},{id:"companies",label:"الشركات",icon:"🏢"},{id:"audit-log",label:"سجل النشاط",icon:"🔍"}]},
+  { s:"الإدارة",         items:[{id:"holding",label:"الشركات القابضة",icon:"🏛️"},{id:"users",label:"المستخدمون",icon:"👥"},{id:"companies",label:"الشركات",icon:"🏢"},{id:"diagnostics",label:"تشخيص البيانات",icon:"🔬"},{id:"audit-log",label:"سجل النشاط",icon:"🔍"}]},
 ];
 
 // ── Shared Components ──────────────────────────────────────────────────────────
@@ -599,6 +599,159 @@ function SyncCard({ item, dateFrom, dateTo, syncType, incOpening }:any) {
         </div>
       )}
     </Card>
+  );
+}
+
+
+
+// ── صفحة التشخيص ─────────────────────────────────────────────────────────────
+function DiagnosticsPage({ companyId, co }:any) {
+  const { data, refetch, isLoading } = (trpc as any).debug.checkData.useQuery({ companyId }, { enabled:!!companyId });
+  const fixDates = (trpc as any).debug.fixDates.useMutation({ onSuccess:()=>refetch() });
+  const fixTypes = (trpc as any).debug.fixAccountTypes.useMutation({ onSuccess:()=>refetch() });
+  const [fixLog, setFixLog] = useState<string[]>([]);
+
+  const runFix = async () => {
+    setFixLog([]);
+    setFixLog(l=>[...l,"🔧 إصلاح التواريخ الفارغة..."]);
+    const r1 = await fixDates.mutateAsync({ companyId });
+    setFixLog(l=>[...l,`✓ تم إصلاح ${r1.fixed} تاريخ`]);
+    setFixLog(l=>[...l,"🔧 إصلاح تصنيف الحسابات..."]);
+    const r2 = await fixTypes.mutateAsync({ companyId });
+    setFixLog(l=>[...l,`✓ تم إصلاح ${r2.fixed} حساب`]);
+    setFixLog(l=>[...l,"✅ اكتمل الإصلاح!"]);
+    refetch();
+  };
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="🔬 تشخيص البيانات" sub={co?.name||""}/>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={()=>refetch()} style={{ padding:"7px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:12 }}>🔄 تحديث</button>
+          <button onClick={runFix} disabled={fixDates.isPending||fixTypes.isPending} style={{ padding:"7px 16px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#D97706,#92400E)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>🔧 إصلاح تلقائي</button>
+        </div>
+      </div>
+
+      {isLoading ? <div style={{ textAlign:"center", padding:40 }}><Spinner/></div> : !data ? <NoData/> : (
+        <>
+          {/* Health banner */}
+          <Card style={{ padding:"14px 18px", marginBottom:14, background:data.isHealthy?C.greenLight:C.redLight, border:`1px solid ${data.isHealthy?"#A7F3D0":"#FECACA"}` }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:24 }}>{data.isHealthy?"✅":"⚠️"}</span>
+              <div>
+                <p style={{ fontWeight:800, color:data.isHealthy?C.green:C.red, margin:0, fontSize:15 }}>
+                  {data.isHealthy?"البيانات سليمة — التقارير تعمل بشكل صحيح":"يوجد مشكلة في البيانات — يحتاج إصلاح"}
+                </p>
+                <p style={{ color:data.isHealthy?"#065F46":"#7F1D1D", fontSize:12, margin:0 }}>
+                  {data.journalEntries} قيد | {data.journalLines} سطر | {data.linesWithNoDate} سطر بلا تاريخ | {data.linesWithNoEntry} سطر بلا قيد أب
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          {/* Stats grid */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+            {[
+              {l:"القيود المحاسبية",  v:fmt(data.journalEntries),  ok:data.journalEntries>0,    icon:"📋"},
+              {l:"سطور القيود",       v:fmt(data.journalLines),    ok:data.journalLines>0,       icon:"📄"},
+              {l:"سطور بلا تاريخ",   v:fmt(data.linesWithNoDate), ok:data.linesWithNoDate===0,  icon:"📅"},
+              {l:"سطور يتيمة",       v:fmt(data.linesWithNoEntry),ok:data.linesWithNoEntry===0, icon:"🔗"},
+            ].map((s,i)=>(
+              <Card key={i} style={{ padding:"12px 14px", background:s.ok?C.surface:C.redLight, border:`1px solid ${s.ok?C.border:"#FECACA"}` }}>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  <span style={{ fontSize:20 }}>{s.icon}</span>
+                  <div>
+                    <p style={{ color:C.muted, fontSize:10, margin:0 }}>{s.l}</p>
+                    <p style={{ fontSize:18, fontWeight:800, color:s.ok?C.text:C.red, margin:0 }}>{s.v}</p>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {/* Type breakdown */}
+          {data.typeBreakdown?.length > 0 && (
+            <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 12px" }}>📊 توزيع الحسابات حسب النوع</p>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr style={{ background:C.primaryLight }}>{["نوع الحساب","عدد السطور","مجموع مدين","مجموع دائن","الحالة"].map(h=><th key={h} style={{ padding:"9px 12px", textAlign:"right", color:C.primary, fontWeight:700, fontSize:11 }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {data.typeBreakdown.map((r:any,i:number)=>{
+                    const typeLabels: Record<string,{l:string,ok:boolean}> = {
+                      assets:{l:"الأصول",ok:true}, liabilities:{l:"الالتزامات",ok:true},
+                      equity:{l:"حقوق الملكية",ok:true}, revenue:{l:"الإيرادات",ok:true},
+                      cogs:{l:"تكلفة المبيعات",ok:true}, expenses:{l:"المصروفات",ok:true},
+                      other_income:{l:"إيرادات أخرى",ok:true}, other_expenses:{l:"مصروفات أخرى",ok:true},
+                      other:{l:"غير مصنّف ⚠️",ok:false},
+                    };
+                    const tl = typeLabels[r.accountType] || {l:r.accountType||"غير محدد",ok:false};
+                    return (
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                        <td style={{ padding:"9px 12px" }}><Badge label={tl.l} bg={tl.ok?C.greenLight:C.amberLight} color={tl.ok?C.green:C.amber}/></td>
+                        <td style={{ padding:"9px 12px", color:C.text, fontWeight:600 }}>{fmt(r.cnt)}</td>
+                        <td style={{ padding:"9px 12px", color:C.teal }}>{fmt(r.totalDebit||0)}</td>
+                        <td style={{ padding:"9px 12px", color:C.red }}>{fmt(r.totalCredit||0)}</td>
+                        <td style={{ padding:"9px 12px" }}><Badge label={tl.ok?"✓ صحيح":"⚠ يحتاج إصلاح"} bg={tl.ok?C.greenLight:C.amberLight} color={tl.ok?C.green:C.amber}/></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Sample lines */}
+          {data.sampleLines?.length > 0 && (
+            <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 12px" }}>🔍 عينة من السطور (أول 5)</p>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead><tr style={{ background:C.primaryLight }}>{["ID","EntryID","كود الحساب","النوع","مدين","دائن","تاريخ","حالة"].map(h=><th key={h} style={{ padding:"8px 10px", textAlign:"right", color:C.primary, fontWeight:700 }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {data.sampleLines.map((l:any,i:number)=>(
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}` }}>
+                      <td style={{ padding:"7px 10px", color:C.muted, fontFamily:"monospace" }}>{l.id}</td>
+                      <td style={{ padding:"7px 10px", color:C.muted, fontFamily:"monospace" }}>{l.entryId}</td>
+                      <td style={{ padding:"7px 10px", color:C.text }}>{l.accountCode}</td>
+                      <td style={{ padding:"7px 10px" }}><Badge label={l.accountType||"null"} bg={l.accountType&&l.accountType!=="other"?C.greenLight:C.amberLight} color={l.accountType&&l.accountType!=="other"?C.green:C.amber}/></td>
+                      <td style={{ padding:"7px 10px", color:C.teal }}>{fmt(l.debit||0)}</td>
+                      <td style={{ padding:"7px 10px", color:C.red }}>{fmt(l.credit||0)}</td>
+                      <td style={{ padding:"7px 10px", color:l.date?C.text:C.red, fontFamily:"monospace" }}>{l.date||"⚠ فارغ"}</td>
+                      <td style={{ padding:"7px 10px" }}><Badge label={l.date&&l.accountType&&l.accountType!=="other"?"✓":"⚠"} bg={l.date&&l.accountType&&l.accountType!=="other"?C.greenLight:C.redLight} color={l.date&&l.accountType&&l.accountType!=="other"?C.green:C.red}/></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+
+          {/* Fix log */}
+          {fixLog.length > 0 && (
+            <Card style={{ padding:"14px 18px", background:"#0F172A" }}>
+              <p style={{ fontWeight:700, fontSize:13, color:"#94A3B8", margin:"0 0 10px" }}>سجل الإصلاح</p>
+              {fixLog.map((l,i)=>(
+                <p key={i} style={{ fontSize:12, color:l.includes("✅")?"#34D399":l.includes("✓")?"#60A5FA":"#CBD5E1", margin:"0 0 4px", fontFamily:"monospace" }}>{l}</p>
+              ))}
+            </Card>
+          )}
+
+          {/* Guidance */}
+          {!data.isHealthy && (
+            <Card style={{ padding:"16px 18px", background:C.amberLight, border:`1px solid #FDE68A`, marginTop:14 }}>
+              <p style={{ fontWeight:700, fontSize:13, color:C.amber, margin:"0 0 10px" }}>🔧 خطوات الإصلاح المقترحة</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {data.linesWithNoDate > 0 && <p style={{ fontSize:12, color:"#92400E", margin:0 }}>1. اضغط "إصلاح تلقائي" لملء التواريخ الفارغة</p>}
+                {data.journalLines === 0 && data.journalEntries > 0 && <p style={{ fontSize:12, color:"#92400E", margin:0 }}>2. القيود موجودة لكن السطور فارغة — أعد المزامنة بنوع "كاملة"</p>}
+                {data.journalEntries === 0 && <p style={{ fontSize:12, color:"#92400E", margin:0 }}>3. لا توجد بيانات — اذهب لصفحة "إعداد وربط Odoo" وابدأ المزامنة</p>}
+                {data.typeBreakdown?.some((r:any)=>!r.accountType||r.accountType==="other") && <p style={{ fontSize:12, color:"#92400E", margin:0 }}>4. يوجد حسابات غير مصنّفة — اضغط "إصلاح تلقائي"</p>}
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1423,6 +1576,7 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;
       case "holding":           return user.role==="cfo_admin"?<HoldingCompaniesPage currentUser={user}/>:<NoData text="غير مصرح"/>;
       case "companies":         return user.role==="cfo_admin"?<CompaniesPage currentUser={user}/>:<NoData text="غير مصرح"/>;
+      case "diagnostics":       return <DiagnosticsPage companyId={companyId} co={co}/>;
       case "audit-log":         return user.role==="cfo_admin"?<AuditLogPage/>:<NoData text="غير مصرح"/>;
       case "profile":           return <ProfilePage user={user} onLogout={onLogout}/>;
       default:                  return <NoData text="هذه الصفحة قيد التطوير"/>;
