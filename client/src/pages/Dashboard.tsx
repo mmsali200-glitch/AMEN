@@ -1031,51 +1031,237 @@ function UsersPage({ currentUser }:any) {
   );
 }
 
-// ── Companies ──────────────────────────────────────────────────────────────────
+// ── Companies ─────────────────────────────────────────────────────────────────
 function CompaniesPage({ currentUser }:any) {
   const { data:companies, refetch } = trpc.company.list.useQuery();
-  const createCo = trpc.company.create.useMutation({ onSuccess:()=>{ refetch(); setShowForm(false); } });
-  const deleteCo = trpc.company.delete.useMutation({ onSuccess:()=>refetch() });
+  const createCo  = trpc.company.create.useMutation({ onSuccess:()=>{ refetch(); setShowForm(false); } });
+  const updateCo  = trpc.company.update.useMutation({ onSuccess:()=>{ refetch(); setEditId(null); } });
+  const deleteCo  = trpc.company.delete.useMutation({ onSuccess:()=>{ refetch(); setDeleteModal(null); } });
+  const clearData = trpc.company.clearData.useMutation({ onSuccess:()=>{ refetch(); setDeleteModal(null); } });
+
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name:"", industry:"", currency:"KWD", contactEmail:"" });
-  const colors = [C.primary, C.teal, C.purple, C.amber];
+  const [editId, setEditId] = useState<number|null>(null);
+  const [editForm, setEditForm] = useState<any>({});
+  const [deleteModal, setDeleteModal] = useState<any>(null); // {id, name, mode}
+  const [deleteStep, setDeleteStep] = useState<"confirm"|"summary">("confirm");
+  const [summary, setSummary] = useState<any>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+
+  const colors = [C.primary, C.teal, C.purple, C.amber, C.green, C.red];
+
+  const startEdit = (co:any) => {
+    setEditId(co.id);
+    setEditForm({ name:co.name, industry:co.industry||"", currency:co.currency||"KWD", contactEmail:co.contactEmail||"", contactPhone:co.contactPhone||"", address:co.address||"", taxNumber:co.taxNumber||"" });
+  };
+
+  const openDeleteModal = async (co:any, mode:"data"|"company") => {
+    setDeleteModal({ id:co.id, name:co.name, mode });
+    setDeleteStep("confirm");
+    setSummary(null);
+  };
+
+  const loadSummary = async () => {
+    if (!deleteModal) return;
+    setLoadingSummary(true);
+    try {
+      const res = await fetch(`/trpc/company.deleteSummary?input=${encodeURIComponent(JSON.stringify({ json:{ id:deleteModal.id } }))}`, {
+        headers:{ Authorization:`Bearer ${localStorage.getItem("cfo_token")||""}` }
+      });
+      const d = await res.json();
+      setSummary(d?.result?.data || d?.result);
+    } catch {}
+    setLoadingSummary(false);
+    setDeleteStep("summary");
+  };
+
+  const confirmDelete = () => {
+    if (!deleteModal) return;
+    if (deleteModal.mode==="data") {
+      clearData.mutate({ id:deleteModal.id });
+    } else {
+      deleteCo.mutate({ id:deleteModal.id });
+    }
+  };
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <PageTitle title="🏢 إدارة الشركات" sub={`${companies?.length||0} شركة مسجلة`} />
-        {currentUser.role==="cfo_admin"&&<button onClick={()=>setShowForm(!showForm)} style={{ padding:"8px 18px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#1D4ED8)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700, boxShadow:"0 2px 8px rgba(37,99,235,0.3)" }}>+ شركة جديدة</button>}
+        {currentUser.role==="cfo_admin" && (
+          <button onClick={()=>setShowForm(!showForm)} style={{ padding:"8px 18px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#1D4ED8)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700, boxShadow:"0 2px 8px rgba(37,99,235,0.3)" }}>
+            + شركة جديدة
+          </button>
+        )}
       </div>
+
       {showForm && (
         <Card style={{ padding:"18px 20px", background:C.primaryLight, marginBottom:14, border:`1px solid ${C.primarySoft}` }}>
+          <p style={{ fontWeight:700, fontSize:13, color:C.primary, margin:"0 0 12px" }}>🏢 شركة جديدة</p>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
-            {([["اسم الشركة","name","text"],["القطاع","industry","text"],["البريد","contactEmail","email"]] as any[]).map(([l,k,t])=>(
-              <div key={k}><label style={{ display:"block", fontSize:11, color:C.primary, marginBottom:3, fontWeight:600 }}>{l}</label><input type={t} value={(form as any)[k]} onChange={(e:any)=>setForm((f:any)=>({...f,[k]:e.target.value}))} required={k==="name"} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.primarySoft}`, background:"#fff", color:C.text, fontSize:12, outline:"none", boxSizing:"border-box" as any }}/></div>
+            {([["اسم الشركة *","name","text"],["القطاع","industry","text"],["البريد الإلكتروني","contactEmail","email"]] as any[]).map(([l,k,t])=>(
+              <div key={k}><label style={{ display:"block", fontSize:11, color:C.primary, marginBottom:3, fontWeight:600 }}>{l}</label>
+                <input type={t} value={(form as any)[k]} onChange={(e:any)=>setForm((f:any)=>({...f,[k]:e.target.value}))} required={k==="name"} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.primarySoft}`, background:"#fff", color:C.text, fontSize:12, outline:"none", boxSizing:"border-box" as any }}/></div>
             ))}
-            <div><label style={{ display:"block", fontSize:11, color:C.primary, marginBottom:3, fontWeight:600 }}>العملة</label><select value={form.currency} onChange={e=>setForm(f=>({...f,currency:e.target.value}))} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.primarySoft}`, background:"#fff", color:C.text, fontSize:12 }}>{["KWD","SAR","AED","USD","EUR","GBP"].map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+            <div><label style={{ display:"block", fontSize:11, color:C.primary, marginBottom:3, fontWeight:600 }}>العملة</label>
+              <select value={form.currency} onChange={e=>setForm(f=>({...f,currency:e.target.value}))} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.primarySoft}`, background:"#fff", color:C.text, fontSize:12 }}>
+                {["KWD","SAR","AED","USD","EUR","GBP","QAR","BHD","OMR"].map(c=><option key={c} value={c}>{c}</option>)}
+              </select></div>
           </div>
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={()=>createCo.mutate(form as any)} disabled={createCo.isPending} style={{ padding:"8px 18px", borderRadius:8, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>{createCo.isPending?"...":"حفظ"}</button>
+            <button onClick={()=>createCo.mutate(form as any)} disabled={!form.name.trim()||createCo.isPending} style={{ padding:"8px 18px", borderRadius:8, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>{createCo.isPending?"جاري...":"حفظ"}</button>
             <button onClick={()=>setShowForm(false)} style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:12 }}>إلغاء</button>
           </div>
         </Card>
       )}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14 }}>
-        {companies?.map((co:any,i:number)=>(
-          <Card key={co.id} style={{ padding:"20px 22px", borderTop:`3px solid ${colors[i%4]}` }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
-              <div style={{ width:42, height:42, borderRadius:12, background:`${colors[i%4]}15`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20 }}>🏢</div>
-              <Badge label={co.currency} bg={`${colors[i%4]}15`} color={colors[i%4]}/>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {companies?.map((co:any, i:number) => (
+          <Card key={co.id} style={{ overflow:"hidden" }}>
+            {/* Company header */}
+            <div style={{ padding:"16px 20px", display:"flex", gap:14, alignItems:"center", borderBottom: editId===co.id ? `1px solid ${C.border}` : "none" }}>
+              <div style={{ width:44, height:44, borderRadius:12, background:`${colors[i%6]}20`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>🏢</div>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  <p style={{ fontWeight:800, color:C.text, margin:0, fontSize:15 }}>{co.name}</p>
+                  <Badge label={co.currency||"KWD"} bg={`${colors[i%6]}15`} color={colors[i%6]}/>
+                  {co.industry && <Badge label={co.industry} bg="#F1F5F9" color={C.textSec}/>}
+                </div>
+                <div style={{ display:"flex", gap:12, marginTop:4, flexWrap:"wrap" }}>
+                  {co.contactEmail && <span style={{ fontSize:11, color:C.muted }}>✉ {co.contactEmail}</span>}
+                  {co.taxNumber && <span style={{ fontSize:11, color:C.muted }}>رقم ضريبي: {co.taxNumber}</span>}
+                  <span style={{ fontSize:11, color:C.muted }}>📅 {new Date(co.createdAt).toLocaleDateString("ar")}</span>
+                </div>
+              </div>
+              {currentUser.role==="cfo_admin" && (
+                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                  <button onClick={()=>editId===co.id?setEditId(null):startEdit(co)} style={{ padding:"6px 14px", borderRadius:8, border:`1px solid ${editId===co.id?C.primary:C.border}`, background:editId===co.id?C.primaryLight:"#fff", color:editId===co.id?C.primary:C.textSec, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    {editId===co.id?"✕ إغلاق":"✏️ تعديل"}
+                  </button>
+                  <button onClick={()=>openDeleteModal(co,"data")} style={{ padding:"6px 12px", borderRadius:8, border:`1px solid ${C.amber}40`, background:C.amberLight, color:C.amber, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    🗂️ مسح البيانات
+                  </button>
+                  <button onClick={()=>openDeleteModal(co,"company")} style={{ padding:"6px 12px", borderRadius:8, border:`1px solid #FECACA`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    🗑️ حذف الشركة
+                  </button>
+                </div>
+              )}
             </div>
-            <h3 style={{ fontSize:14, fontWeight:800, color:C.text, margin:"0 0 4px" }}>{co.name}</h3>
-            <p style={{ color:C.muted, fontSize:12, margin:"0 0 12px" }}>{co.industry||"—"}</p>
-            {currentUser.role==="cfo_admin"&&<button onClick={()=>{if(confirm(`حذف "${co.name}"؟`))deleteCo.mutate({id:co.id})}} style={{ width:"100%", padding:"5px", borderRadius:7, border:`1px solid #FECACA`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:10 }}>حذف</button>}
+
+            {/* Edit form */}
+            {editId===co.id && (
+              <div style={{ padding:"18px 20px", background:"#F8FAFF" }}>
+                <p style={{ fontWeight:700, fontSize:13, color:C.primary, margin:"0 0 14px" }}>✏️ تعديل بيانات الشركة</p>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:14 }}>
+                  {([
+                    ["اسم الشركة","name","text"],
+                    ["القطاع","industry","text"],
+                    ["العملة","currency","select"],
+                    ["البريد الإلكتروني","contactEmail","email"],
+                    ["رقم الهاتف","contactPhone","text"],
+                    ["الرقم الضريبي","taxNumber","text"],
+                    ["العنوان","address","text"],
+                  ] as any[]).map(([l,k,t])=>(
+                    <div key={k} style={{ gridColumn: k==="address"?"1/-1":"auto" }}>
+                      <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>{l}</label>
+                      {t==="select" ? (
+                        <select value={editForm[k]||""} onChange={(e:any)=>setEditForm((f:any)=>({...f,[k]:e.target.value}))} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:"#fff", color:C.text, fontSize:12 }}>
+                          {["KWD","SAR","AED","USD","EUR","GBP","QAR","BHD","OMR"].map(c=><option key={c} value={c}>{c}</option>)}
+                        </select>
+                      ) : (
+                        <input type={t} value={editForm[k]||""} onChange={(e:any)=>setEditForm((f:any)=>({...f,[k]:e.target.value}))} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:"#fff", color:C.text, fontSize:12, outline:"none", boxSizing:"border-box" as any }}/>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={()=>updateCo.mutate({ id:co.id, ...editForm })} disabled={updateCo.isPending} style={{ padding:"9px 22px", borderRadius:9, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                    {updateCo.isPending?"جاري الحفظ...":"✅ حفظ التغييرات"}
+                  </button>
+                  <button onClick={()=>setEditId(null)} style={{ padding:"9px 16px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>إلغاء</button>
+                </div>
+              </div>
+            )}
           </Card>
         ))}
       </div>
+
+      {/* Delete / Clear Modal */}
+      {deleteModal && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, direction:"rtl" }}>
+          <Card style={{ padding:"28px 32px", maxWidth:480, width:"90%", position:"relative" }}>
+            <button onClick={()=>setDeleteModal(null)} style={{ position:"absolute", top:14, left:14, background:"transparent", border:"none", fontSize:18, cursor:"pointer", color:C.muted }}>✕</button>
+
+            {deleteStep==="confirm" && (
+              <>
+                <div style={{ textAlign:"center", marginBottom:20 }}>
+                  <div style={{ fontSize:44, marginBottom:10 }}>{deleteModal.mode==="data"?"🗂️":"⚠️"}</div>
+                  <h3 style={{ fontSize:18, fontWeight:800, color:deleteModal.mode==="data"?C.amber:C.red, margin:"0 0 8px" }}>
+                    {deleteModal.mode==="data"?"مسح بيانات الشركة":"حذف الشركة بالكامل"}
+                  </h3>
+                  <p style={{ color:C.textSec, fontSize:14, margin:0, lineHeight:1.7 }}>
+                    {deleteModal.mode==="data"
+                      ? <>سيتم مسح <strong>جميع القيود المحاسبية وسطورها وسجلات المزامنة</strong> للشركة <strong>"{deleteModal.name}"</strong> مع الاحتفاظ بالشركة نفسها</>
+                      : <>سيتم حذف <strong>الشركة وجميع بياناتها</strong> بما في ذلك القيود والمستخدمين والإعدادات <strong>نهائياً</strong> ولا يمكن التراجع</>
+                    }
+                  </p>
+                </div>
+                <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+                  <button onClick={()=>setDeleteModal(null)} style={{ padding:"10px 22px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13, fontWeight:600 }}>إلغاء</button>
+                  <button onClick={loadSummary} disabled={loadingSummary} style={{ padding:"10px 22px", borderRadius:9, border:"none", background:deleteModal.mode==="data"?C.amber:C.red, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+                    {loadingSummary?<><Spinner/>جاري التحقق...</>:`عرض تفاصيل ${deleteModal.mode==="data"?"المسح":"الحذف"} ←`}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {deleteStep==="summary" && (
+              <>
+                <h3 style={{ fontSize:16, fontWeight:800, color:C.text, margin:"0 0 16px" }}>
+                  📊 ملخص {deleteModal.mode==="data"?"البيانات التي ستُمسح":"البيانات التي ستُحذف"}
+                </h3>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+                  {[
+                    { label:"القيود المحاسبية", value:summary?.counts?.journalEntries||0, icon:"📋", color:C.primary },
+                    { label:"سطور القيود", value:summary?.counts?.journalLines||0, icon:"📄", color:C.teal },
+                    { label:"سجلات المزامنة", value:summary?.counts?.syncLogs||0, icon:"🔄", color:C.purple },
+                    ...(deleteModal.mode==="company" ? [
+                      { label:"صلاحيات المستخدمين", value:summary?.counts?.userAccess||0, icon:"👥", color:C.amber },
+                      { label:"إعدادات Odoo", value:summary?.counts?.odooConfigs||0, icon:"🔗", color:C.green },
+                    ] : []),
+                  ].map((s,i)=>(
+                    <div key={i} style={{ padding:"12px 14px", borderRadius:9, background:s.value>0?`${s.color}10`:"#F8FAFC", border:`1px solid ${s.value>0?s.color+"30":C.border}`, display:"flex", gap:10, alignItems:"center" }}>
+                      <span style={{ fontSize:20 }}>{s.icon}</span>
+                      <div>
+                        <p style={{ fontSize:11, color:C.muted, margin:0 }}>{s.label}</p>
+                        <p style={{ fontSize:18, fontWeight:800, color:s.value>0?s.color:C.muted, margin:0 }}>{s.value.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding:"12px 16px", borderRadius:9, background:deleteModal.mode==="data"?"#FFFBEB":C.redLight, border:`1px solid ${deleteModal.mode==="data"?"#FDE68A":"#FECACA"}`, marginBottom:18 }}>
+                  <p style={{ color:deleteModal.mode==="data"?"#92400E":C.red, fontSize:13, margin:0, fontWeight:600 }}>
+                    {deleteModal.mode==="data"
+                      ? "⚠️ سيتم مسح هذه البيانات نهائياً — يمكنك إعادة المزامنة لاحقاً"
+                      : "❌ سيتم حذف الشركة والمعلومات بالكامل — هذا الإجراء لا يمكن التراجع عنه"}
+                  </p>
+                </div>
+                <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                  <button onClick={()=>setDeleteModal(null)} style={{ padding:"10px 20px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>إلغاء</button>
+                  <button onClick={()=>setDeleteStep("confirm")} style={{ padding:"10px 16px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>← رجوع</button>
+                  <button onClick={confirmDelete} disabled={deleteCo.isPending||clearData.isPending} style={{ padding:"10px 22px", borderRadius:9, border:"none", background:deleteModal.mode==="data"?C.amber:C.red, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:800, display:"flex", alignItems:"center", gap:8 }}>
+                    {deleteCo.isPending||clearData.isPending?<><Spinner/>جاري...</>:deleteModal.mode==="data"?"🗂️ تأكيد المسح":"🗑️ تأكيد الحذف النهائي"}
+                  </button>
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ── Audit Log ──────────────────────────────────────────────────────────────────
 function AuditLogPage() {

@@ -72,6 +72,7 @@ const companyRouter = router({
     if (!access.length) return [];
     return db.select().from(schema.companies).where(sql`id IN (${access.map(a=>a.companyId).join(",")})`);
   }),
+
   create: adminProcedure
     .input(z.object({ name:z.string().min(2), industry:z.string().optional(), currency:z.string().default("KWD"), contactEmail:z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
@@ -80,9 +81,87 @@ const companyRouter = router({
       await db.insert(schema.auditLogs).values({ userId:ctx.user.id, companyId:co.id, action:"create_company", target:co.name });
       return co;
     }),
+
+  // تعديل بيانات الشركة
+  update: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      name: z.string().min(2).optional(),
+      industry: z.string().optional(),
+      currency: z.string().optional(),
+      contactEmail: z.string().optional(),
+      contactPhone: z.string().optional(),
+      address: z.string().optional(),
+      taxNumber: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { id, ...data } = input;
+      await db.update(schema.companies).set(data).where(eq(schema.companies.id, id));
+      await db.insert(schema.auditLogs).values({ userId:ctx.user.id, companyId:id, action:"update_company", target:input.name||"" });
+      return { success:true };
+    }),
+
+  // ملخص ما سيُحذف قبل الحذف
+  deleteSummary: adminProcedure
+    .input(z.object({ id:z.number() }))
+    .query(async ({ input }) => {
+      const [co] = await db.select().from(schema.companies).where(eq(schema.companies.id, input.id)).limit(1);
+      const [{ entries }] = await db.select({ entries:sql<number>`count(*)` }).from(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.id));
+      const [{ lines }] = await db.select({ lines:sql<number>`count(*)` }).from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.id));
+      const [{ users }] = await db.select({ users:sql<number>`count(*)` }).from(schema.userCompanyAccess).where(eq(schema.userCompanyAccess.companyId, input.id));
+      const syncRows = await db.run(sql`SELECT count(*) as cnt FROM sync_logs WHERE company_id=${input.id}`);
+      const odooRows = await db.run(sql`SELECT count(*) as cnt FROM odoo_configs WHERE company_id=${input.id}`);
+      return {
+        company: co,
+        counts: {
+          journalEntries: entries,
+          journalLines: lines,
+          userAccess: users,
+          syncLogs: (syncRows as any).rows?.[0]?.cnt || 0,
+          odooConfigs: (odooRows as any).rows?.[0]?.cnt || 0,
+        }
+      };
+    }),
+
+  // حذف الشركة مع جميع بياناتها
   delete: adminProcedure
     .input(z.object({ id:z.number() }))
-    .mutation(async ({ input }) => { await db.delete(schema.companies).where(eq(schema.companies.id, input.id)); return { success:true }; }),
+    .mutation(async ({ input, ctx }) => {
+      const [co] = await db.select().from(schema.companies).where(eq(schema.companies.id, input.id)).limit(1);
+      if (!co) throw new TRPCError({ code:"NOT_FOUND", message:"الشركة غير موجودة" });
+
+      // حذف بالترتيب (FK constraints)
+      // 1. سطور القيود
+      await db.delete(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.id));
+      // 2. القيود المحاسبية
+      await db.delete(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.id));
+      // 3. سجلات المزامنة
+      await db.run(sql`DELETE FROM sync_logs WHERE company_id=${input.id}`);
+      // 4. إعدادات Odoo
+      await db.run(sql`DELETE FROM odoo_configs WHERE company_id=${input.id}`);
+      // 5. صلاحيات المستخدمين
+      await db.delete(schema.userCompanyAccess).where(eq(schema.userCompanyAccess.companyId, input.id));
+      // 6. عضوية المجموعات
+      await db.run(sql`DELETE FROM company_group_members WHERE company_id=${input.id}`);
+      // 7. سجل المراجعة للشركة
+      await db.run(sql`DELETE FROM audit_logs WHERE company_id=${input.id}`);
+      // 8. الشركة نفسها
+      await db.delete(schema.companies).where(eq(schema.companies.id, input.id));
+
+      await db.insert(schema.auditLogs).values({ userId:ctx.user.id, action:"delete_company", target:co.name, details:`حذف شامل لجميع بيانات الشركة` });
+      return { success:true, deletedCompany:co.name };
+    }),
+
+  // حذف بيانات الشركة فقط (بدون حذف الشركة نفسها)
+  clearData: adminProcedure
+    .input(z.object({ id:z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      await db.delete(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.id));
+      await db.delete(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.id));
+      await db.run(sql`DELETE FROM sync_logs WHERE company_id=${input.id}`);
+      await db.insert(schema.auditLogs).values({ userId:ctx.user.id, companyId:input.id, action:"clear_company_data", target:"جميع البيانات المحاسبية" });
+      return { success:true };
+    }),
 });
 
 // ── Users ──────────────────────────────────────────────────────────────────────
