@@ -889,8 +889,15 @@ const groupsRouter = router({
       // 2. صلاحيات المستخدم الحالي
       await db.run(sql`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, assigned_by, status) VALUES (${ctx.user.id}, ${newCo.id}, 'cfo_admin', ${ctx.user.id}, 'active')`);
 
-      // 3. نسخ إعدادات Odoo
-      await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)`);
+      // 3. نسخ إعدادات Odoo — مع دعم الجداول القديمة والجديدة
+      try {
+        await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)`);
+      } catch {
+        // fallback: إذا لم تكن الأعمدة الجديدة موجودة
+        await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, 1)`);
+        // ثم تحديث الأعمدة منفردة
+        try { await db.run(sql`UPDATE odoo_configs SET odoo_company_id=${input.odooId}, odoo_company_name=${input.name} WHERE company_id=${newCo.id}`); } catch {}
+      }
 
       // 4. ربط بالمجموعة
       await db.run(sql`INSERT INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, sync_status) VALUES (${input.groupId}, ${newCo.id}, ${input.odooId}, ${input.name}, 'pending')`);

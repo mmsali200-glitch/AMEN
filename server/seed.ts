@@ -82,13 +82,74 @@ async function seed() {
 
 seed().catch(e => { console.error(e); process.exit(1); });
 
-// Add new columns if they don't exist (migration)
+// Migrations — add missing columns safely
 async function migrate() {
+  // odoo_configs columns
   try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_id INTEGER`); } catch {}
   try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_name TEXT`); } catch {}
-  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0`); } catch {}
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER NOT NULL DEFAULT 0`); } catch {}
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_version TEXT`); } catch {}
+  try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN last_tested_at TEXT`); } catch {}
+
+  // Recreate odoo_configs with all columns if still missing
+  const cols = await db.run(sql`PRAGMA table_info(odoo_configs)`);
+  const colNames = ((cols as any).rows||[]).map((r:any) => r.name);
+  if (!colNames.includes('odoo_company_id')) {
+    console.log('🔧 إعادة بناء جدول odoo_configs...');
+    await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_configs_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER NOT NULL UNIQUE,
+      url TEXT NOT NULL,
+      database TEXT NOT NULL,
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      odoo_company_id INTEGER,
+      odoo_company_name TEXT,
+      is_connected INTEGER NOT NULL DEFAULT 0,
+      odoo_version TEXT,
+      last_tested_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await db.run(sql`INSERT OR IGNORE INTO odoo_configs_new (id,company_id,url,database,username,password,is_connected)
+      SELECT id,company_id,url,database,username,password,COALESCE(is_connected,0) FROM odoo_configs`);
+    await db.run(sql`DROP TABLE odoo_configs`);
+    await db.run(sql`ALTER TABLE odoo_configs_new RENAME TO odoo_configs`);
+    console.log('✓ تم إعادة بناء جدول odoo_configs');
+  }
+
+  // company_groups & members
+  try {
+    await db.run(sql`CREATE TABLE IF NOT EXISTS company_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      base_currency TEXT DEFAULT 'KWD',
+      created_by INTEGER,
+      odoo_url TEXT, odoo_database TEXT, odoo_username TEXT, odoo_password TEXT,
+      odoo_version TEXT, is_connected INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  } catch {}
+  try {
+    await db.run(sql`CREATE TABLE IF NOT EXISTS company_group_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      company_id INTEGER NOT NULL,
+      odoo_company_id INTEGER,
+      odoo_company_name TEXT,
+      exchange_rate REAL DEFAULT 1.0,
+      is_active INTEGER DEFAULT 1,
+      sync_status TEXT DEFAULT 'pending',
+      last_sync_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  } catch {}
+
+  console.log('✓ Migrations completed');
 }
-migrate().catch(() => {});
+migrate().catch(e => console.error('Migration error:', e));
 
 // Company Groups Tables Migration
 async function migrateGroups() {
