@@ -124,8 +124,10 @@ const usersRouter = router({
   update: adminProcedure
     .input(z.object({ id: z.number(), name: z.string().optional(), role: z.enum(["cfo_admin","manager","accountant","auditor","partner","custom"]).optional(), isActive: z.boolean().optional() }))
     .mutation(async ({ input }) => {
-      const { id, ...data } = input;
-      await db.update(schema.users).set({ ...data, updatedAt: new Date().toISOString() }).where(eq(schema.users.id, id));
+      const { id, isActive, ...rest } = input;
+      const data: any = { ...rest, updatedAt: new Date().toISOString() };
+      if (isActive !== undefined) data.isActive = isActive ? 1 : 0;
+      await db.update(schema.users).set(data).where(eq(schema.users.id, id));
       return { success: true };
     }),
 
