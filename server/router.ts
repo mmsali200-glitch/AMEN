@@ -218,7 +218,14 @@ const odooRouter = router({
   getConfig: protectedProcedure
     .input(z.object({ companyId:z.number() }))
     .query(async ({ input }) => {
-      const rows = await db.run(sql`SELECT * FROM odoo_configs WHERE company_id = ${input.companyId} LIMIT 1`);
+      const rows = await db.run(sql`SELECT
+        id, company_id as companyId,
+        url, database, username, password,
+        odoo_company_id as odooCompanyId,
+        odoo_company_name as odooCompanyName,
+        is_connected as isConnected,
+        odoo_version as odooVersion
+      FROM odoo_configs WHERE company_id = ${input.companyId} LIMIT 1`);
       return (rows as any).rows?.[0] || null;
     }),
 
@@ -248,7 +255,7 @@ const odooRouter = router({
   syncJournals: protectedProcedure
     .input(z.object({
       companyId: z.number(),
-      odooCompanyId: z.number(),
+      odooCompanyId: z.number().nullable().optional(),
       dateFrom: z.string(),
       dateTo: z.string(),
       syncType: z.string().default("incremental"),
@@ -258,7 +265,11 @@ const odooRouter = router({
       // جلب إعدادات Odoo
       const cfgRows = await db.run(sql`SELECT * FROM odoo_configs WHERE company_id = ${input.companyId} LIMIT 1`);
       const cfg = (cfgRows as any).rows?.[0];
-      if (!cfg) throw new TRPCError({ code:"NOT_FOUND", message:"لم يتم إعداد Odoo — اذهب لصفحة الإعداد أولاً" });
+      if (!cfg) throw new TRPCError({ code:"NOT_FOUND", message:"لم يتم إعداد Odoo لهذه الشركة — اذهب لصفحة الإعداد" });
+
+      // استخدام odooCompanyId من الإعدادات إذا لم يُرسَل
+      const resolvedOdooCompanyId = input.odooCompanyId ??
+        cfg.odoo_company_id ?? cfg.odooCompanyId ?? null;
 
       const conn = new OdooConnector(cfg.url, cfg.database, cfg.username, cfg.password);
       await conn.authenticate();
@@ -275,7 +286,7 @@ const odooRouter = router({
 
       // ── 1. مزامنة الرصيد الافتتاحي (ما قبل الفترة) ──────────────────────
       if (input.includeOpeningBalance) {
-        const openingLines = await conn.getOpeningBalanceLines(input.odooCompanyId, input.dateFrom);
+        const openingLines = await conn.getOpeningBalanceLines(resolvedOdooCompanyId as number, input.dateFrom);
         openingLinesCount = openingLines.length;
 
         if (openingLines.length > 0) {
@@ -317,12 +328,12 @@ const odooRouter = router({
       }
 
       // ── 2. مزامنة حركات الفترة ────────────────────────────────────────────
-      const total = await conn.countEntries(input.odooCompanyId, input.dateFrom, input.dateTo);
+      const total = await conn.countEntries(resolvedOdooCompanyId as number, input.dateFrom, input.dateTo);
       const batchSize = 100;
       let offset = 0;
 
       while (offset < total) {
-        const moves = await conn.getJournalEntries(input.odooCompanyId, input.dateFrom, input.dateTo, batchSize, offset);
+        const moves = await conn.getJournalEntries(resolvedOdooCompanyId as number, input.dateFrom, input.dateTo, batchSize, offset);
         if (!moves.length) break;
 
         for (const move of moves) {

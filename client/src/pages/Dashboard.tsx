@@ -280,111 +280,149 @@ function OdooSetupPage({ companyId, co, onNavigate }:any) {
 
 
 function JournalSyncPage({ companyId }:any) {
-  const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear()}-01-01`);
-  const [dateTo, setDateTo] = useState(`${new Date().getFullYear()}-12-31`);
+  const year = new Date().getFullYear();
+  const [dateFrom, setDateFrom] = useState(`${year}-01-01`);
+  const [dateTo,   setDateTo]   = useState(`${year}-12-31`);
   const [syncType, setSyncType] = useState("incremental");
   const [includeOpening, setIncludeOpening] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing, setSyncing]   = useState(false);
   const [progress, setProgress] = useState(0);
-  const [log, setLog] = useState<string[]>([]);
-  const [done, setDone] = useState(false);
+  const [log, setLog] = useState<{msg:string,type:string}[]>([]);
+  const [done, setDone]         = useState(false);
   const [syncResult, setSyncResult] = useState<any>(null);
+  const [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   const { data:sync, refetch } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId });
-  const { data:config } = trpc.odoo.getConfig.useQuery({ companyId }, { enabled:!!companyId });
-  const syncMutation = trpc.odoo.syncJournals.useMutation();
+  const { data:config }        = trpc.odoo.getConfig.useQuery({ companyId }, { enabled:!!companyId });
+  const syncMutation           = trpc.odoo.syncJournals.useMutation();
 
   useEffect(() => { logRef.current?.scrollTo(0, logRef.current.scrollHeight); }, [log]);
 
-  const addLog = (msg:string) => setLog(l => [...l, `[${new Date().toLocaleTimeString("ar")}] ${msg}`]);
+  const addLog = (msg:string, type="info") =>
+    setLog(l => [...l, { msg:`[${new Date().toLocaleTimeString("ar")}] ${msg}`, type }]);
+
+  const isReady = !!config && !!(config as any).odooCompanyId;
 
   const handleSync = async () => {
-    if (!companyId) return;
-    if (!config?.odoo_company_id && !(config as any)?.odooCompanyId) {
-      alert("⚠️ لم يتم اختيار شركة Odoo — اذهب لصفحة الإعداد أولاً واختر الشركة");
-      return;
-    }
-    const odooCompanyId = (config as any)?.odoo_company_id || (config as any)?.odooCompanyId;
+    if (!companyId || !config) return;
+    const odooCompanyId = (config as any)?.odooCompanyId || (config as any)?.odoo_company_id;
+    if (!odooCompanyId) { setError("لم يتم تحديد شركة Odoo — اذهب لإعداد Odoo واختر الشركة"); return; }
 
-    setSyncing(true); setDone(false); setProgress(0); setLog([]);
-    addLog("🔗 جاري الاتصال بـ Odoo...");
-    setProgress(5);
+    setSyncing(true); setDone(false); setProgress(0); setLog([]); setError("");
 
-    const progressInterval = setInterval(() => {
-      setProgress(p => p < 85 ? p + Math.random() * 8 : p);
-    }, 1500);
+    // Animated steps
+    const steps: [number, string, string][] = [
+      [8,  "🔗 جاري الاتصال بـ Odoo...", "info"],
+      [18, `✅ تم تسجيل الدخول — شركة: ${(config as any)?.odooCompanyName||""}`, "success"],
+      [28, `📊 جاري حساب الأرصدة الافتتاحية لكل الحسابات...`, "info"],
+      [42, "📥 جاري استيراد القيود المحاسبية...", "info"],
+      [58, "⚙️ معالجة سطور القيود وتصنيف الحسابات...", "info"],
+      [72, "💾 حفظ البيانات في قاعدة البيانات...", "info"],
+      [85, "🔄 تحديث حالة المزامنة...", "info"],
+    ];
 
-    setTimeout(() => addLog("✅ تم المصادقة بنجاح"), 800);
-    setTimeout(() => addLog(`📥 جاري جلب القيود من ${dateFrom} إلى ${dateTo}...`), 1500);
-    if (includeOpening) setTimeout(() => addLog("📊 جاري حساب الأرصدة الافتتاحية لجميع الحسابات..."), 2500);
-    setTimeout(() => addLog("⚙️ معالجة سطور القيود وتصنيف الحسابات..."), 3500);
-    setTimeout(() => addLog("💾 حفظ البيانات في قاعدة البيانات..."), 5000);
-
-    syncMutation.mutate({ companyId, odooCompanyId, dateFrom, dateTo, syncType, includeOpeningBalance: includeOpening }, {
-      onSuccess: (data) => {
-        clearInterval(progressInterval);
-        setProgress(100);
-        addLog(`✅ اكتملت المزامنة!`);
-        addLog(`📋 تم استيراد ${data.inserted} قيد للفترة المحددة`);
-        if (data.openingLines > 0) addLog(`📊 تم معالجة ${data.openingLines} سطر للرصيد الافتتاحي`);
-        setSyncResult(data); setDone(true); setSyncing(false);
-        refetch();
-      },
-      onError: (err) => {
-        clearInterval(progressInterval);
-        addLog(`❌ خطأ: ${err.message}`);
-        setSyncing(false); setProgress(0);
+    let stepIdx = 0;
+    const stepInterval = setInterval(() => {
+      if (stepIdx < steps.length) {
+        const [pct, msg, type] = steps[stepIdx];
+        setProgress(pct);
+        addLog(msg, type);
+        stepIdx++;
       }
-    });
+    }, 900);
+
+    syncMutation.mutate(
+      { companyId, odooCompanyId, dateFrom, dateTo, syncType, includeOpeningBalance: includeOpening },
+      {
+        onSuccess: (data:any) => {
+          clearInterval(stepInterval);
+          setProgress(100);
+          addLog(`✅ اكتملت — ${data.inserted} قيد محاسبي`, "success");
+          if (data.openingLines > 0) addLog(`📊 رصيد افتتاحي: ${data.openingLines} سطر معالج`, "success");
+          setSyncResult(data); setDone(true); setSyncing(false);
+          refetch();
+        },
+        onError: (err:any) => {
+          clearInterval(stepInterval);
+          addLog(`❌ خطأ: ${err.message}`, "error");
+          setError(err.message);
+          setSyncing(false); setProgress(0);
+        }
+      }
+    );
   };
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
       <PageTitle title="🔄 مزامنة الحركات المحاسبية" sub="استيراد القيود من Odoo مع الأرصدة الافتتاحية" />
 
-      {/* الشركة المربوطة */}
-      {config && (
-        <Card style={{ padding:"12px 16px", marginBottom:14, background:C.greenLight, border:`1px solid #A7F3D0` }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{ fontSize:20 }}>🏢</span>
+      {/* Config status banner */}
+      {!config ? (
+        <Card style={{ padding:"14px 18px", marginBottom:14, background:C.redLight, border:`1px solid #FECACA` }}>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <span style={{ fontSize:20 }}>⚠️</span>
             <div>
-              <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>الشركة المربوطة: {(config as any)?.odoo_company_name || "—"}</p>
-              <p style={{ color:"#065F46", margin:0, fontSize:11 }}>{(config as any)?.url} | {(config as any)?.database}</p>
+              <p style={{ fontWeight:700, color:C.red, margin:0, fontSize:13 }}>لم يتم إعداد Odoo لهذه الشركة</p>
+              <p style={{ color:"#7F1D1D", fontSize:12, margin:"2px 0 0" }}>اذهب لصفحة "إعداد وربط Odoo" واختر الشركة أولاً، أو أنشئ شركة قابضة وارتبط بها</p>
             </div>
+          </div>
+        </Card>
+      ) : !isReady ? (
+        <Card style={{ padding:"14px 18px", marginBottom:14, background:C.amberLight, border:`1px solid #FDE68A` }}>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <span style={{ fontSize:20 }}>⚠️</span>
+            <div>
+              <p style={{ fontWeight:700, color:C.amber, margin:0, fontSize:13 }}>الاتصال بـ Odoo موجود لكن لم يُحدَّد معرّف الشركة</p>
+              <p style={{ color:"#92400E", fontSize:12, margin:"2px 0 0" }}>ارجع لصفحة "إعداد وربط Odoo" واختر الشركة من القائمة المكتشفة</p>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <Card style={{ padding:"12px 16px", marginBottom:14, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <span style={{ fontSize:20 }}>✅</span>
+            <div style={{ flex:1 }}>
+              <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:13 }}>
+                جاهز للمزامنة — {(config as any)?.odooCompanyName || "شركة Odoo"}
+              </p>
+              <p style={{ color:"#065F46", fontSize:11, margin:"1px 0 0" }}>
+                قاعدة البيانات: {(config as any)?.database} | معرّف الشركة في Odoo: #{(config as any)?.odooCompanyId}
+              </p>
+            </div>
+            <Badge label={`Odoo ID: ${(config as any)?.odooCompanyId}`} bg={C.primarySoft} color={C.primary}/>
           </div>
         </Card>
       )}
 
-      {!config && (
-        <Card style={{ padding:"14px 16px", marginBottom:14, background:C.amberLight, border:`1px solid #FDE68A` }}>
-          <p style={{ color:"#92400E", margin:0, fontSize:13 }}>⚠️ لم يتم إعداد Odoo بعد — اذهب لصفحة "إعداد وربط Odoo" أولاً واختر الشركة</p>
-        </Card>
-      )}
-
-      {/* إحصاءات */}
+      {/* Stats */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:16 }}>
         {[
-          {l:"القيود المحاسبية",v:fmt(sync?.totalEntries||0),c:C.primary,bg:C.primaryLight},
-          {l:"سطور القيود",v:fmt(sync?.totalLines||0),c:C.teal,bg:C.tealLight},
-          {l:"آخر مزامنة",v:sync?.lastSync?.started_at||sync?.lastSync?.startedAt?new Date(sync.lastSync.started_at||sync.lastSync.startedAt).toLocaleDateString("ar"):"لم تتم",c:C.purple,bg:C.purpleLight},
+          {l:"القيود المحاسبية", v:fmt(sync?.totalEntries||0), c:C.primary, bg:C.primaryLight},
+          {l:"سطور القيود",      v:fmt(sync?.totalLines||0),   c:C.teal,    bg:C.tealLight},
+          {l:"آخر مزامنة",      v:sync?.lastSync?.started_at
+              ? new Date(sync.lastSync.started_at).toLocaleDateString("ar")
+              : "لم تتم",                                       c:C.purple,  bg:C.purpleLight},
         ].map((s,i)=>(
-          <Card key={i} style={{ padding:"14px 16px" }}>
+          <Card key={i} style={{ padding:"13px 16px" }}>
             <p style={{ color:C.muted, fontSize:10, margin:"0 0 3px" }}>{s.l}</p>
-            <p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
+            <p style={{ fontSize:17, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
           </Card>
         ))}
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        {/* Settings */}
         <Card style={{ padding:"20px" }}>
           <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 14px" }}>⚙️ إعدادات المزامنة</p>
 
           <div style={{ marginBottom:12 }}>
             <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>نوع المزامنة</label>
             <select value={syncType} onChange={e=>setSyncType(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
-              <option value="incremental">تزايدية — إضافة الجديد فقط</option>
-              <option value="full">كاملة — إعادة بناء كامل (يمسح القديم)</option>
+              <option value="incremental">تزايدية — إضافة الجديد فقط (أسرع)</option>
+              <option value="full">كاملة — إعادة بناء كامل من الصفر</option>
             </select>
           </div>
 
@@ -399,78 +437,95 @@ function JournalSyncPage({ companyId }:any) {
             </div>
           </div>
 
-          {/* خيار الرصيد الافتتاحي */}
-          <label onClick={()=>setIncludeOpening(o=>!o)} style={{ display:"flex", gap:10, padding:"12px 14px", borderRadius:9, border:`1.5px solid ${includeOpening?C.primary:C.border}`, background:includeOpening?C.primaryLight:C.bg, cursor:"pointer", marginBottom:14, transition:"all 0.15s" }}>
+          {/* Opening balance toggle */}
+          <label onClick={()=>setIncludeOpening(o=>!o)} style={{ display:"flex", gap:10, padding:"11px 13px", borderRadius:9, border:`1.5px solid ${includeOpening?C.primary:C.border}`, background:includeOpening?C.primaryLight:C.bg, cursor:"pointer", marginBottom:14, transition:"all 0.15s" }}>
             <div style={{ width:18, height:18, borderRadius:4, border:`2px solid ${includeOpening?C.primary:C.muted}`, background:includeOpening?C.primary:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
               {includeOpening && <span style={{ color:"#fff", fontSize:11, fontWeight:800 }}>✓</span>}
             </div>
             <div>
-              <p style={{ fontSize:12, fontWeight:700, color:includeOpening?C.primary:C.text, margin:"0 0 2px" }}>✅ تضمين الرصيد الافتتاحي (مهم)</p>
-              <p style={{ fontSize:11, color:C.textSec, margin:0, lineHeight:1.5 }}>يحسب أرصدة جميع الحسابات قبل فترة المزامنة ويخزّنها كرصيد افتتاحي — ضروري لصحة ميزان المراجعة</p>
+              <p style={{ fontSize:12, fontWeight:700, color:includeOpening?C.primary:C.text, margin:"0 0 2px" }}>تضمين الرصيد الافتتاحي</p>
+              <p style={{ fontSize:11, color:C.textSec, margin:0, lineHeight:1.5 }}>يحسب أرصدة الحسابات قبل الفترة ويخزّنها — ضروري لصحة ميزان المراجعة</p>
             </div>
           </label>
 
-          <button onClick={handleSync} disabled={syncing||!companyId||!config} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:syncing||!config?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:syncing||!config?"default":"pointer", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            {syncing ? <><Spinner/>جاري المزامنة...</> : "▶ بدء المزامنة"}
+          {error && <div style={{ padding:"9px 12px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12, marginBottom:10 }}>⚠️ {error}</div>}
+
+          <button onClick={handleSync} disabled={syncing||!isReady}
+            style={{ width:"100%", padding:"12px", borderRadius:10, border:"none",
+              background:syncing||!isReady?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)",
+              color:"#fff", cursor:syncing||!isReady?"default":"pointer",
+              fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {syncing?<><Spinner/>جاري المزامنة...</>:!isReady?"⚠️ أكمل إعداد Odoo أولاً":"▶ بدء المزامنة"}
           </button>
 
+          {/* Progress bar */}
           {(syncing||done) && (
             <div style={{ marginTop:14 }}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
                 <span style={{ fontSize:12, color:C.textSec }}>التقدم</span>
-                <span style={{ fontSize:12, color:done?C.green:C.primary, fontWeight:700 }}>{Math.round(progress)}%</span>
+                <span style={{ fontSize:12, color:done?C.green:C.primary, fontWeight:700 }}>{progress}%</span>
               </div>
-              <div style={{ background:"#F1F5F9", borderRadius:6, height:8 }}>
-                <div style={{ width:`${progress}%`, height:"100%", background:done?"linear-gradient(90deg,#059669,#0D9488)":"linear-gradient(90deg,#2563EB,#0D9488)", borderRadius:6, transition:"width 0.5s" }}/>
+              <div style={{ background:"#F1F5F9", borderRadius:6, height:8, overflow:"hidden" }}>
+                <div style={{ width:`${progress}%`, height:"100%", background:done?"linear-gradient(90deg,#059669,#0D9488)":"linear-gradient(90deg,#2563EB,#0D9488)", borderRadius:6, transition:"width 0.6s ease" }}/>
               </div>
             </div>
           )}
         </Card>
 
+        {/* Live log */}
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           {log.length > 0 && (
-            <Card style={{ background:"#0F172A", flex:1 }}>
-              <div style={{ padding:"10px 14px 6px", borderBottom:"1px solid rgba(255,255,255,0.1)" }}>
-                <span style={{ fontSize:11, color:"#94A3B8", fontWeight:600 }}>● سجل العمليات</span>
+            <div style={{ background:"#0F172A", borderRadius:12, overflow:"hidden", flex:1 }}>
+              <div style={{ padding:"9px 14px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex", alignItems:"center", gap:8 }}>
+                <div style={{ display:"flex", gap:4 }}>
+                  <div style={{ width:9,height:9,borderRadius:"50%",background:"#EF4444" }}/>
+                  <div style={{ width:9,height:9,borderRadius:"50%",background:"#F59E0B" }}/>
+                  <div style={{ width:9,height:9,borderRadius:"50%",background:"#10B981" }}/>
+                </div>
+                <span style={{ fontSize:11, color:"#64748B", fontFamily:"monospace" }}>cfo-system — سجل المزامنة</span>
               </div>
-              <div ref={logRef} style={{ padding:"10px 14px", maxHeight:200, overflowY:"auto", display:"flex", flexDirection:"column", gap:3 }}>
-                {log.map((l,i) => (
-                  <p key={i} style={{ fontSize:11, color:l.includes("✅")?"#34D399":l.includes("❌")?"#F87171":l.includes("📊")||l.includes("📋")?"#60A5FA":"#CBD5E1", margin:0, fontFamily:"monospace" }}>{l}</p>
+              <div ref={logRef} style={{ padding:"12px 14px", maxHeight:220, overflowY:"auto", display:"flex", flexDirection:"column", gap:4 }}>
+                {log.map((l,i)=>(
+                  <p key={i} style={{ fontSize:11, margin:0, fontFamily:"monospace",
+                    color:l.type==="success"?"#34D399":l.type==="error"?"#F87171":l.msg.includes("📊")||l.msg.includes("📥")?"#60A5FA":"#CBD5E1" }}>
+                    {l.msg}
+                  </p>
                 ))}
+                {syncing && <span style={{ fontSize:12, color:"#2563EB" }}>$ <span style={{ animation:"blink 1s step-end infinite", display:"inline-block", width:6, height:13, background:"#2563EB", verticalAlign:"middle" }}/></span>}
               </div>
-            </Card>
+            </div>
           )}
 
           {done && syncResult && (
-            <Card style={{ background:C.greenLight, border:`1px solid #A7F3D0`, padding:"18px" }}>
-              <p style={{ fontWeight:800, fontSize:14, color:C.green, margin:"0 0 12px" }}>✅ اكتملت المزامنة!</p>
+            <Card style={{ background:C.greenLight, border:`1px solid #A7F3D0`, padding:"16px 18px" }}>
+              <p style={{ fontWeight:800, fontSize:13, color:C.green, margin:"0 0 12px" }}>🎉 اكتملت المزامنة بنجاح!</p>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
                 {[
-                  {l:"قيود الفترة",v:fmt(syncResult.inserted||0)},
-                  {l:"إجمالي Odoo",v:fmt(syncResult.total||0)},
-                  {l:"سطور افتتاحية",v:fmt(syncResult.openingLines||0)},
-                  {l:"في قاعدة البيانات",v:fmt(sync?.totalEntries||0)},
+                  {l:"قيود الفترة",    v:fmt(syncResult.inserted||0)},
+                  {l:"إجمالي Odoo",    v:fmt(syncResult.total||0)},
+                  {l:"رصيد افتتاحي",  v:fmt(syncResult.openingLines||0)+" سطر"},
+                  {l:"في النظام الآن", v:fmt(sync?.totalEntries||0)},
                 ].map((s,i)=>(
                   <div key={i} style={{ padding:"10px", borderRadius:8, background:"rgba(255,255,255,0.7)", textAlign:"center" }}>
-                    <p style={{ fontSize:16, fontWeight:800, color:C.green, margin:"0 0 2px" }}>{s.v}</p>
+                    <p style={{ fontSize:15, fontWeight:800, color:C.green, margin:"0 0 2px" }}>{s.v}</p>
                     <p style={{ fontSize:10, color:C.textSec, margin:0 }}>{s.l}</p>
                   </div>
                 ))}
               </div>
-              <p style={{ fontSize:12, color:C.green, margin:0, fontWeight:600 }}>🎉 يمكنك الآن الاطلاع على جميع التقارير المالية</p>
+              <p style={{ fontSize:12, color:C.green, margin:0, fontWeight:600 }}>✅ يمكنك الآن الاطلاع على جميع التقارير المالية</p>
             </Card>
           )}
 
-          {!syncing && !done && (
-            <Card style={{ padding:"18px" }}>
-              <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>📌 ملاحظات مهمة</p>
+          {!syncing && !done && isReady && (
+            <Card style={{ padding:"16px 18px" }}>
+              <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>📌 ملاحظات</p>
               {[
-                "الرصيد الافتتاحي يُحسب تلقائياً من جميع الحركات قبل تاريخ البداية",
-                "ميزان المراجعة سيعرض: افتتاحي + حركة الفترة + ختامي",
-                "يُنصح بمزامنة كاملة في أول مرة ثم تزايدية بعدها",
-                "يمكن مزامنة فترات مختلفة (شهر، ربع، سنة) حسب الحاجة",
+                "يُنصح بـ مزامنة كاملة في أول مرة ثم تزايدية لاحقاً",
+                "الرصيد الافتتاحي يُحسب تلقائياً من حركات ما قبل الفترة",
+                "ميزان المراجعة يعرض: افتتاحي + حركة + ختامي بشكل صحيح",
+                "يمكن تحديد أي فترة زمنية (شهر، ربع، سنة كاملة)",
               ].map((t,i)=>(
-                <p key={i} style={{ fontSize:12, color:C.textSec, margin:"0 0 8px", display:"flex", gap:8 }}>
+                <p key={i} style={{ fontSize:12, color:C.textSec, margin:"0 0 7px", display:"flex", gap:7 }}>
                   <span style={{ color:C.teal, fontWeight:700, flexShrink:0 }}>✓</span>{t}
                 </p>
               ))}
@@ -481,6 +536,7 @@ function JournalSyncPage({ companyId }:any) {
     </div>
   );
 }
+
 
 function TrialBalancePage({ companyId }:any) {
   const year = new Date().getFullYear();
