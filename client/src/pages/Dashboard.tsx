@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
+import OdooPage from "./OdooPage";
+import SyncPage from "./SyncPage";
+import UploadPage from "./UploadPage";
 
 // ── ألوان التصميم الفاتح ──────────────────────────────────────────────────────
 const C = {
@@ -434,6 +437,9 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const renderPage = () => {
     switch(page) {
       case "dashboard":      return <OverviewDashboard companyId={companyId} companies={companies||[]} />;
+      case "odoo":           return <OdooPage companyId={companyId} companies={companies||[]} />;
+      case "journal-sync":   return <SyncPage companyId={companyId} companies={companies||[]} />;
+      case "upload":         return <UploadPage companyId={companyId} companies={companies||[]} />;
       case "journal-entries":return <JournalEntriesPage companyId={companyId} />;
       case "users":          return user.role==="cfo_admin" ? <UsersManagement currentUser={user}/> : <Placeholder title="غير مصرح"/>;
       case "companies":      return user.role==="cfo_admin" ? <CompaniesPage currentUser={user}/> : <Placeholder title="غير مصرح"/>;
