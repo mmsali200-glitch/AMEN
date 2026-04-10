@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  cfo-system:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - JWT_SECRET=cfo-intelligence-secret-change-this-in-production
+    volumes:
+      - cfo_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  cfo_data:
