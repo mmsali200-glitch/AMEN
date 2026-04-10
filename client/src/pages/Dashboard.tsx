@@ -18,7 +18,7 @@ const NAV = [
   { s:"القوائم المالية", items:[{id:"trial-balance",  label:"ميزان المراجعة",     icon:"⚖️"},{id:"income",label:"قائمة الدخل",icon:"📈"},{id:"balance-sheet",label:"الميزانية العمومية",icon:"🏦"},{id:"cashflow",label:"التدفقات النقدية",icon:"💵"}]},
   { s:"التحليل",         items:[{id:"ratios",         label:"النسب المالية",      icon:"📉"},{id:"monthly",label:"التحليل الشهري",icon:"📅"}]},
   { s:"الذكاء AI",       items:[{id:"advisor",        label:"المستشار AI ✦",      icon:"🤖"},{id:"chatbot",label:"شات بوت مالي",icon:"💬"}]},
-  { s:"الإدارة",         items:[{id:"users",          label:"المستخدمون",         icon:"👥"},{id:"companies",label:"الشركات",icon:"🏢"},{id:"audit-log",label:"سجل النشاط",icon:"🔍"}]},
+  { s:"الإدارة",         items:[{id:"holding",label:"الشركات القابضة",icon:"🏛️"},{id:"users",label:"المستخدمون",icon:"👥"},{id:"companies",label:"الشركات",icon:"🏢"},{id:"audit-log",label:"سجل النشاط",icon:"🔍"}]},
 ];
 
 // ── Shared Components ──────────────────────────────────────────────────────────
@@ -1133,6 +1133,414 @@ function ProfilePage({ user, onLogout }:any) {
   );
 }
 
+
+// ── Holding Companies (الشركات القابضة) ───────────────────────────────────────
+function HoldingCompaniesPage({ currentUser }:any) {
+  const utils = trpc.useUtils();
+  const { data:groups, refetch } = (trpc as any).groups.list.useQuery();
+  const createGroup = (trpc as any).groups.create.useMutation({ onSuccess:()=>{ refetch(); setStep("odoo"); } });
+  const saveOdoo = (trpc as any).groups.saveOdooConfig.useMutation();
+  const testDiscover = (trpc as any).groups.testAndDiscover.useMutation();
+  const linkCompanies = (trpc as any).groups.linkCompanies.useMutation();
+  const deleteGroup = (trpc as any).groups.delete.useMutation({ onSuccess:()=>refetch() });
+  const getMembers = (trpc as any).groups.getMembers;
+
+  // Wizard state
+  const [step, setStep] = useState<"list"|"create"|"odoo"|"discover"|"select"|"confirm"|"done">("list");
+  const [activeGroup, setActiveGroup] = useState<any>(null);
+  const [groupForm, setGroupForm] = useState({ name:"", description:"", baseCurrency:"KWD" });
+  const [odooForm, setOdooForm] = useState({ url:"https://onesolutionc-roma.odoo.com", database:"onesolutionc-roma-main-17095422", username:"admin@admin.com", password:"KMM9999" });
+  const [discovered, setDiscovered] = useState<any[]>([]);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [linking, setLinking] = useState(false);
+  const [linked, setLinked] = useState<any[]>([]);
+  const [expandedGroup, setExpandedGroup] = useState<number|null>(null);
+  const [error, setError] = useState("");
+
+  const toggleSelect = (id:number) => {
+    setSelected(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  };
+
+  const handleCreateGroup = () => {
+    if (!groupForm.name.trim()) return;
+    createGroup.mutate(groupForm, {
+      onSuccess:(g:any)=>{ setActiveGroup(g); setError(""); },
+      onError:(e:any)=>setError(e.message)
+    });
+  };
+
+  const handleSaveOdoo = async () => {
+    if (!activeGroup) return;
+    setError("");
+    await saveOdoo.mutateAsync({ groupId:activeGroup.id, ...odooForm });
+    setStep("discover");
+  };
+
+  const handleDiscover = () => {
+    if (!activeGroup) return;
+    setError("");
+    testDiscover.mutate({ groupId:activeGroup.id }, {
+      onSuccess:(data:any)=>{ setDiscovered(data.companies); setStep("select"); },
+      onError:(e:any)=>{ setError(e.message); setStep("odoo"); }
+    });
+  };
+
+  const handleLink = async () => {
+    if (!activeGroup || selected.size===0) return;
+    setLinking(true);
+    const toLink = discovered.filter(c=>selected.has(c.id)).map(c=>({ odooId:c.id, name:c.name, currency:c.currency||"KWD" }));
+    const res = await linkCompanies.mutateAsync({ groupId:activeGroup.id, companies:toLink });
+    setLinked(res.created||[]);
+    setStep("done");
+    setLinking(false);
+    refetch();
+  };
+
+  const stepLabels = ["إنشاء المجموعة","ربط Odoo","اكتشاف الشركات","اختيار الشركات","تأكيد"];
+  const stepIdx   = {list:-1,create:0,odoo:1,discover:2,select:3,confirm:4,done:5};
+
+  if (step==="list") return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="🏛️ الشركات القابضة" sub="إدارة مجموعات الشركات المرتبطة بـ Odoo" />
+        {currentUser.role==="cfo_admin" && (
+          <button onClick={()=>{ setStep("create"); setGroupForm({name:"",description:"",baseCurrency:"KWD"}); setActiveGroup(null); setDiscovered([]); setSelected(new Set()); setLinked([]); setError(""); }}
+            style={{ padding:"9px 20px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, boxShadow:"0 2px 8px rgba(37,99,235,0.3)" }}>
+            + شركة قابضة جديدة
+          </button>
+        )}
+      </div>
+
+      {(!groups||groups.length===0) ? (
+        <Card style={{ padding:"48px 24px", textAlign:"center", background:"linear-gradient(135deg,#F8FAFF,#F0FDFA)" }}>
+          <div style={{ fontSize:48, marginBottom:14 }}>🏛️</div>
+          <h3 style={{ fontSize:18, fontWeight:800, color:C.text, margin:"0 0 8px" }}>لا توجد شركات قابضة بعد</h3>
+          <p style={{ color:C.textSec, fontSize:13, maxWidth:380, margin:"0 auto 20px", lineHeight:1.7 }}>أنشئ شركة قابضة وربطها بقاعدة بيانات Odoo لاستيراد جميع الشركات التابعة لها</p>
+          <button onClick={()=>setStep("create")} style={{ padding:"10px 24px", borderRadius:10, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>+ إنشاء أول شركة قابضة</button>
+        </Card>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          {groups.map((g:any) => (
+            <GroupCard key={g.id} group={g} onExpand={setExpandedGroup} expanded={expandedGroup===g.id}
+              onDelete={()=>{ if(confirm(`حذف "${g.name}"؟`)) deleteGroup.mutate({id:g.id}); }}
+              onSync={()=>{ setActiveGroup(g); setOdooForm({url:g.odoo_url||"",database:g.odoo_database||"",username:g.odoo_username||"",password:g.odoo_password||""}); setStep("discover"); }}
+              currentUser={currentUser}/>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      {/* Wizard Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <PageTitle title="🏛️ إنشاء شركة قابضة جديدة" sub="اتبع الخطوات لربط Odoo واستيراد الشركات" />
+        <button onClick={()=>{ setStep("list"); refetch(); }} style={{ padding:"7px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:12 }}>← رجوع للقائمة</button>
+      </div>
+
+      {/* Steps indicator */}
+      {step!=="done" && (
+        <div style={{ display:"flex", gap:6, marginBottom:20 }}>
+          {stepLabels.map((l,i) => {
+            const cur = (stepIdx as any)[step]||0;
+            const done = i < cur;
+            const active = i===cur;
+            return (
+              <div key={i} style={{ flex:1, textAlign:"center" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                  <div style={{ flex:1, height:3, background:done?C.teal:i===0?"transparent":C.border, borderRadius:2 }}/>
+                  <div style={{ width:28, height:28, borderRadius:"50%", background:done?C.teal:active?C.primary:C.border, color:done||active?"#fff":C.muted, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0 }}>
+                    {done?"✓":i+1}
+                  </div>
+                  <div style={{ flex:1, height:3, background:done||active?C.primary:C.border, borderRadius:2 }}/>
+                </div>
+                <p style={{ fontSize:9, color:active?C.primary:done?C.teal:C.muted, margin:"4px 0 0", fontWeight:active||done?700:400 }}>{l}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {error && <div style={{ padding:"10px 14px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12, marginBottom:14 }}>⚠️ {error}</div>}
+
+      {/* Step: Create */}
+      {step==="create" && (
+        <Card style={{ padding:"24px" }}>
+          <p style={{ fontWeight:700, fontSize:15, color:C.text, margin:"0 0 16px" }}>📝 بيانات الشركة القابضة</p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>اسم الشركة القابضة *</label>
+              <input value={groupForm.name} onChange={e=>setGroupForm(f=>({...f,name:e.target.value}))} placeholder="مثال: مجموعة الخليج القابضة" style={{ width:"100%", padding:"10px 14px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box" as any }}/>
+            </div>
+            <div>
+              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>الوصف</label>
+              <input value={groupForm.description} onChange={e=>setGroupForm(f=>({...f,description:e.target.value}))} placeholder="وصف اختياري" style={{ width:"100%", padding:"10px 14px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:13, outline:"none", boxSizing:"border-box" as any }}/>
+            </div>
+            <div>
+              <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>العملة الأساسية</label>
+              <select value={groupForm.baseCurrency} onChange={e=>setGroupForm(f=>({...f,baseCurrency:e.target.value}))} style={{ width:"100%", padding:"10px 14px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:13 }}>
+                {["KWD","SAR","AED","USD","EUR","GBP","QAR","BHD","OMR"].map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={handleCreateGroup} disabled={!groupForm.name.trim()||createGroup.isPending} style={{ padding:"11px 28px", borderRadius:10, border:"none", background:!groupForm.name.trim()?C.muted:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:700 }}>
+            {createGroup.isPending?"جاري الإنشاء...":"إنشاء المجموعة ←"}
+          </button>
+        </Card>
+      )}
+
+      {/* Step: Odoo Config */}
+      {step==="odoo" && activeGroup && (
+        <Card style={{ padding:"24px" }}>
+          <div style={{ marginBottom:16, padding:"10px 14px", borderRadius:8, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+            <p style={{ color:C.green, fontWeight:700, margin:0 }}>✅ تم إنشاء المجموعة: <strong>{activeGroup.name}</strong></p>
+          </div>
+          <p style={{ fontWeight:700, fontSize:15, color:C.text, margin:"0 0 16px" }}>🔌 بيانات الاتصال بـ Odoo</p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+            {[
+              ["رابط الخادم (URL)","url","text","https://onesolutionc-roma.odoo.com"],
+              ["اسم قاعدة البيانات","database","text","onesolutionc-roma-main-17095422"],
+              ["اسم المستخدم","username","email","admin@admin.com"],
+              ["كلمة المرور","password","password","••••••••"],
+            ].map(([l,k,type,ph])=>(
+              <div key={k as string}>
+                <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>{l as string}</label>
+                <input type={type as string} value={(odooForm as any)[k as string]} onChange={e=>setOdooForm((f:any)=>({...f,[k as string]:e.target.value}))} placeholder={ph as string}
+                  style={{ width:"100%", padding:"9px 12px", borderRadius:8, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:"ltr", textAlign:"left", boxSizing:"border-box" as any }}/>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={handleSaveOdoo} disabled={saveOdoo.isPending} style={{ padding:"11px 24px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:700 }}>
+              {saveOdoo.isPending?"جاري الحفظ...":"حفظ والمتابعة ←"}
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {/* Step: Discover */}
+      {step==="discover" && activeGroup && (
+        <Card style={{ padding:"32px", textAlign:"center" }}>
+          <div style={{ fontSize:48, marginBottom:16 }}>🔍</div>
+          <h3 style={{ fontSize:18, fontWeight:800, color:C.text, margin:"0 0 8px" }}>اكتشاف الشركات في Odoo</h3>
+          <p style={{ color:C.textSec, fontSize:14, margin:"0 0 24px", lineHeight:1.7 }}>
+            سيتصل النظام بـ Odoo ويقرأ جميع الشركات الموجودة في قاعدة البيانات<br/>
+            <span style={{ color:C.muted, fontSize:12 }}>{activeGroup.odoo_url || odooForm.url}</span>
+          </p>
+          <button onClick={handleDiscover} disabled={testDiscover.isPending} style={{ padding:"13px 36px", borderRadius:12, border:"none", background:testDiscover.isPending?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:15, fontWeight:700, display:"inline-flex", alignItems:"center", gap:10, boxShadow:"0 4px 14px rgba(37,99,235,0.3)" }}>
+            {testDiscover.isPending ? <><Spinner/> جاري الاتصال واكتشاف الشركات...</> : "🔍 اكتشف الشركات الآن"}
+          </button>
+          {testDiscover.isPending && (
+            <div style={{ marginTop:20, fontSize:13, color:C.muted }}>
+              <p>جاري الاتصال بـ Odoo وقراءة الشركات...</p>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Step: Select Companies */}
+      {step==="select" && (
+        <div>
+          <Card style={{ padding:"18px 20px", marginBottom:14, background:C.greenLight, border:`1px solid #A7F3D0` }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                <span style={{ fontSize:20 }}>✅</span>
+                <div>
+                  <p style={{ fontWeight:800, color:C.green, margin:0 }}>تم اكتشاف {discovered.length} شركة في Odoo</p>
+                  <p style={{ color:"#065F46", fontSize:12, margin:0 }}>{activeGroup?.name}</p>
+                </div>
+              </div>
+              <span style={{ padding:"4px 12px", borderRadius:18, background:"rgba(255,255,255,0.7)", color:C.green, fontSize:12, fontWeight:700 }}>{selected.size} مختارة</span>
+            </div>
+          </Card>
+
+          <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:0 }}>🏢 اختر الشركات التي تريد استيرادها:</p>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={()=>setSelected(new Set(discovered.map((c:any)=>c.id)))} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.primary}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:11, fontWeight:600 }}>تحديد الكل</button>
+                <button onClick={()=>setSelected(new Set())} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:11 }}>إلغاء الكل</button>
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:10 }}>
+              {discovered.map((c:any) => (
+                <div key={c.id} onClick={()=>toggleSelect(c.id)} style={{ padding:"14px 16px", borderRadius:10, border:`2px solid ${selected.has(c.id)?C.primary:C.border}`, background:selected.has(c.id)?C.primaryLight:"#fff", cursor:"pointer", transition:"all 0.15s" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div style={{ flex:1 }}>
+                      <p style={{ fontWeight:700, color:selected.has(c.id)?C.primary:C.text, margin:"0 0 4px", fontSize:13 }}>{c.name}</p>
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {c.currency && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:10, background:selected.has(c.id)?C.primarySoft:"#F1F5F9", color:selected.has(c.id)?C.primary:C.textSec }}>{c.currency}</span>}
+                        {c.city && <span style={{ fontSize:10, color:C.muted }}>📍{c.city}</span>}
+                        <span style={{ fontSize:10, color:C.muted }}>ID:{c.id}</span>
+                      </div>
+                      {c.vat && <p style={{ fontSize:10, color:C.muted, margin:"4px 0 0" }}>رقم ضريبي: {c.vat}</p>}
+                    </div>
+                    <div style={{ width:20, height:20, borderRadius:4, border:`2px solid ${selected.has(c.id)?C.primary:C.muted}`, background:selected.has(c.id)?C.primary:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      {selected.has(c.id) && <span style={{ color:"#fff", fontSize:11, fontWeight:800 }}>✓</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+            <button onClick={()=>setStep("odoo")} style={{ padding:"10px 20px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>← رجوع</button>
+            <button onClick={handleLink} disabled={selected.size===0||linking} style={{ padding:"11px 28px", borderRadius:10, border:"none", background:selected.size===0||linking?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:selected.size===0||linking?"default":"pointer", fontSize:14, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+              {linking?<><Spinner/>جاري الإنشاء والربط...</>:`✅ ربط ${selected.size} شركة مختارة →`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Done */}
+      {step==="done" && (
+        <Card style={{ padding:"32px", textAlign:"center", background:"linear-gradient(135deg,#ECFDF5,#F0FDFA)" }}>
+          <div style={{ fontSize:52, marginBottom:16 }}>🎉</div>
+          <h3 style={{ fontSize:20, fontWeight:800, color:C.green, margin:"0 0 8px" }}>تم الربط بنجاح!</h3>
+          <p style={{ color:"#065F46", fontSize:14, margin:"0 0 20px" }}>تم إنشاء وربط {linked.length} شركة من Odoo بالمجموعة القابضة</p>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:10, marginBottom:20, textAlign:"right" }}>
+            {linked.map((c:any,i:number)=>(
+              <div key={i} style={{ padding:"12px 14px", borderRadius:10, background:"rgba(255,255,255,0.8)", border:"1px solid #A7F3D0" }}>
+                <p style={{ fontWeight:700, color:C.green, margin:"0 0 3px", fontSize:13 }}>{c.name}</p>
+                <p style={{ color:C.textSec, fontSize:11, margin:0 }}>{c.status==="created"?"✅ تم الإنشاء":"◉ موجودة مسبقاً"}</p>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+            <button onClick={()=>{ setStep("list"); refetch(); }} style={{ padding:"10px 22px", borderRadius:10, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>← عرض القائمة</button>
+            <button onClick={()=>{ setStep("list"); refetch(); }} style={{ padding:"10px 22px", borderRadius:10, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>ابدأ المزامنة</button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── Group Card ─────────────────────────────────────────────────────────────────
+function GroupCard({ group, onExpand, expanded, onDelete, onSync, currentUser }:any) {
+  const { data:members } = (trpc as any).groups.getMembers.useQuery({ groupId:group.id }, { enabled:expanded });
+  const syncMutation = trpc.odoo.syncJournals.useMutation();
+  const updateStatus = (trpc as any).groups.updateSyncStatus.useMutation();
+  const [syncingId, setSyncingId] = useState<number|null>(null);
+  const [syncLog, setSyncLog] = useState<Record<number,string>>({});
+
+  const handleSyncCompany = async (member:any) => {
+    setSyncingId(member.company_id);
+    setSyncLog(l=>({...l,[member.company_id]:"جاري المزامنة..."}));
+    const year = new Date().getFullYear();
+    syncMutation.mutate({
+      companyId: member.company_id,
+      odooCompanyId: member.odoo_company_id,
+      dateFrom: `${year}-01-01`,
+      dateTo: `${year}-12-31`,
+      syncType: "full",
+      includeOpeningBalance: true,
+    }, {
+      onSuccess: (data:any) => {
+        setSyncLog(l=>({...l,[member.company_id]:`✅ ${fmt(data.inserted)} قيد + رصيد افتتاحي`}));
+        setSyncingId(null);
+        updateStatus.mutate({ groupId:group.id, companyId:member.company_id, status:"synced" });
+      },
+      onError: (err:any) => {
+        setSyncLog(l=>({...l,[member.company_id]:`❌ ${err.message}`}));
+        setSyncingId(null);
+      }
+    });
+  };
+
+  const handleSyncAll = async () => {
+    if (!members?.length) return;
+    for (const m of members) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      handleSyncCompany(m);
+    }
+  };
+
+  return (
+    <Card style={{ overflow:"hidden" }}>
+      {/* Header */}
+      <div style={{ padding:"18px 20px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+          <div style={{ width:42, height:42, borderRadius:11, background:"linear-gradient(135deg,#2563EB,#0D9488)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20 }}>🏛️</div>
+          <div>
+            <p style={{ fontWeight:800, color:C.text, margin:0, fontSize:15 }}>{group.name}</p>
+            <div style={{ display:"flex", gap:8, marginTop:3 }}>
+              {group.is_connected?<Badge label="● متصل بـ Odoo" bg={C.greenLight} color={C.green}/>:<Badge label="○ غير متصل" bg="#F1F5F9" color={C.muted}/>}
+              {group.odoo_database && <Badge label={group.odoo_database.slice(0,20)+"..."} bg={C.primaryLight} color={C.primary}/>}
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {currentUser.role==="cfo_admin" && (
+            <>
+              <button onClick={()=>onExpand(expanded?null:group.id)} style={{ padding:"6px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:expanded?C.primaryLight:"#fff", color:expanded?C.primary:C.textSec, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                {expanded?"▲ إخفاء":"▼ عرض الشركات"}
+              </button>
+              <button onClick={onDelete} style={{ padding:"6px 12px", borderRadius:8, border:"1px solid #FECACA", background:C.redLight, color:C.red, cursor:"pointer", fontSize:12 }}>حذف</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Members */}
+      {expanded && (
+        <div style={{ borderTop:`1px solid ${C.border}` }}>
+          <div style={{ padding:"12px 20px", background:C.bg, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <p style={{ fontWeight:600, fontSize:13, color:C.text, margin:0 }}>الشركات التابعة ({members?.length||0})</p>
+            {members?.length>0 && (
+              <button onClick={handleSyncAll} disabled={syncingId!==null} style={{ padding:"6px 14px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                🔄 مزامنة جميع الشركات
+              </button>
+            )}
+          </div>
+          {!members ? (
+            <div style={{ padding:24, textAlign:"center" }}><Spinner/></div>
+          ) : members.length===0 ? (
+            <div style={{ padding:24, textAlign:"center" }}><p style={{ color:C.muted, fontSize:13 }}>لا توجد شركات — ارجع لإعداد المجموعة</p></div>
+          ) : (
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  {["الشركة","Odoo ID","القيود","السطور","حالة المزامنة","إجراء"].map(h=>(
+                    <th key={h} style={{ padding:"10px 14px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((m:any,i:number) => (
+                  <tr key={m.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"11px 14px" }}>
+                      <p style={{ fontWeight:700, color:C.text, margin:0 }}>{m.company_name}</p>
+                      <p style={{ color:C.muted, fontSize:10, margin:0 }}>{m.currency}</p>
+                    </td>
+                    <td style={{ padding:"11px 14px" }}><Badge label={`#${m.odoo_company_id}`} bg={C.primaryLight} color={C.primary}/></td>
+                    <td style={{ padding:"11px 14px", color:C.teal, fontWeight:600 }}>{fmt(m.entry_count||0)}</td>
+                    <td style={{ padding:"11px 14px", color:C.textSec }}>{fmt(m.line_count||0)}</td>
+                    <td style={{ padding:"11px 14px" }}>
+                      {syncLog[m.company_id] ? (
+                        <span style={{ fontSize:11, color:syncLog[m.company_id].includes("✅")?C.green:syncLog[m.company_id].includes("❌")?C.red:C.primary }}>{syncLog[m.company_id]}</span>
+                      ) : (
+                        <Badge label={m.sync_status==="synced"?"✅ مزامن":m.sync_status==="pending"?"⏳ معلق":"◉ "+m.sync_status} bg={m.sync_status==="synced"?C.greenLight:C.amberLight} color={m.sync_status==="synced"?C.green:C.amber}/>
+                      )}
+                    </td>
+                    <td style={{ padding:"11px 14px" }}>
+                      <button onClick={()=>handleSyncCompany(m)} disabled={syncingId===m.company_id} style={{ padding:"5px 12px", borderRadius:7, border:"none", background:syncingId===m.company_id?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:11, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}>
+                        {syncingId===m.company_id?<><Spinner/>مزامنة...</>:"🔄 مزامنة"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
   const [page, setPage] = useState("dashboard");
@@ -1161,6 +1569,7 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;
       case "chatbot":           return <ChatbotPage companyId={companyId} co={co}/>;
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;
+      case "holding":           return user.role==="cfo_admin"?<HoldingCompaniesPage currentUser={user}/>:<NoData text="غير مصرح"/>;
       case "companies":         return user.role==="cfo_admin"?<CompaniesPage currentUser={user}/>:<NoData text="غير مصرح"/>;
       case "audit-log":         return user.role==="cfo_admin"?<AuditLogPage/>:<NoData text="غير مصرح"/>;
       case "profile":           return <ProfilePage user={user} onLogout={onLogout}/>;

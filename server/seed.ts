@@ -89,3 +89,39 @@ async function migrate() {
   try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0`); } catch {}
 }
 migrate().catch(() => {});
+
+// Company Groups Tables Migration
+async function migrateGroups() {
+  try {
+    await db.run(sql`CREATE TABLE IF NOT EXISTS company_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      base_currency TEXT DEFAULT 'KWD',
+      created_by INTEGER,
+      odoo_url TEXT,
+      odoo_database TEXT,
+      odoo_username TEXT,
+      odoo_password TEXT,
+      odoo_version TEXT,
+      is_connected INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+
+    await db.run(sql`CREATE TABLE IF NOT EXISTS company_group_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      company_id INTEGER NOT NULL,
+      odoo_company_id INTEGER,
+      odoo_company_name TEXT,
+      exchange_rate REAL DEFAULT 1.0,
+      is_active INTEGER DEFAULT 1,
+      sync_status TEXT DEFAULT 'pending',
+      last_sync_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    console.log("✓ جداول المجموعات جاهزة");
+  } catch(e) { console.log("Groups tables:", e); }
+}
+migrateGroups();

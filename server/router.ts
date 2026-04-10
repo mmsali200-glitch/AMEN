@@ -642,6 +642,152 @@ const auditRouter = router({
     }),
 });
 
+
+// ── Company Groups (الشركات القابضة) ─────────────────────────────────────────
+const groupsRouter = router({
+
+  // قائمة المجموعات
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await db.run(sql`SELECT * FROM company_groups ORDER BY id DESC`);
+    return (rows as any).rows || [];
+  }),
+
+  // إنشاء مجموعة جديدة
+  create: adminProcedure
+    .input(z.object({ name:z.string().min(2), description:z.string().optional(), baseCurrency:z.string().default("KWD") }))
+    .mutation(async ({ input, ctx }) => {
+      const res = await db.run(sql`INSERT INTO company_groups (name, description, base_currency, created_by) VALUES (${input.name}, ${input.description||""}, ${input.baseCurrency}, ${ctx.user.id}) RETURNING *`);
+      const group = (res as any).rows?.[0] || { id:(res as any).lastInsertRowid, ...input };
+      await db.insert(schema.auditLogs).values({ userId:ctx.user.id, action:"create_group", target:input.name });
+      return group;
+    }),
+
+  // حفظ إعدادات Odoo للمجموعة
+  saveOdooConfig: adminProcedure
+    .input(z.object({ groupId:z.number(), url:z.string(), database:z.string(), username:z.string(), password:z.string() }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`UPDATE company_groups SET odoo_url=${input.url}, odoo_database=${input.database}, odoo_username=${input.username}, odoo_password=${input.password}, updated_at=${new Date().toISOString()} WHERE id=${input.groupId}`);
+      return { success:true };
+    }),
+
+  // اختبار الاتصال واكتشاف الشركات
+  testAndDiscover: adminProcedure
+    .input(z.object({ groupId:z.number() }))
+    .mutation(async ({ input }) => {
+      const rows = await db.run(sql`SELECT * FROM company_groups WHERE id = ${input.groupId} LIMIT 1`);
+      const group = (rows as any).rows?.[0];
+      if (!group) throw new TRPCError({ code:"NOT_FOUND", message:"المجموعة غير موجودة" });
+      if (!group.odoo_url) throw new TRPCError({ code:"BAD_REQUEST", message:"لم يتم إدخال بيانات Odoo بعد" });
+
+      const conn = new OdooConnector(group.odoo_url, group.odoo_database, group.odoo_username, group.odoo_password);
+      await conn.authenticate();
+      const version = await conn.getVersion();
+      const companies = await conn.getCompanies();
+
+      // تحديث حالة الاتصال
+      await db.run(sql`UPDATE company_groups SET is_connected=1, odoo_version=${version}, updated_at=${new Date().toISOString()} WHERE id=${input.groupId}`);
+
+      return {
+        success: true,
+        version,
+        companies: companies.map((c:any) => ({
+          id: c.id,
+          name: c.name,
+          currency: Array.isArray(c.currency_id) ? c.currency_id[1] : "",
+          city: c.city || "",
+          vat: c.vat || "",
+          street: c.street || "",
+        }))
+      };
+    }),
+
+  // ربط شركات Odoo بالمجموعة وإنشاؤها في النظام
+  linkCompanies: adminProcedure
+    .input(z.object({
+      groupId: z.number(),
+      companies: z.array(z.object({
+        odooId: z.number(),
+        name: z.string(),
+        currency: z.string().default("KWD"),
+        industry: z.string().optional(),
+      }))
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const groupRows = await db.run(sql`SELECT * FROM company_groups WHERE id = ${input.groupId} LIMIT 1`);
+      const group = (groupRows as any).rows?.[0];
+      if (!group) throw new TRPCError({ code:"NOT_FOUND" });
+
+      const created = [];
+      for (const c of input.companies) {
+        // تحقق إذا الشركة موجودة بالفعل
+        const existing = await db.run(sql`SELECT id FROM company_group_members WHERE group_id=${input.groupId} AND odoo_company_id=${c.odooId} LIMIT 1`);
+        if ((existing as any).rows?.length) {
+          created.push({ odooId:c.odooId, name:c.name, status:"already_exists" });
+          continue;
+        }
+
+        // إنشاء شركة في النظام
+        const [newCo] = await db.insert(schema.companies).values({
+          name: c.name,
+          currency: c.currency || "KWD",
+          industry: c.industry || "",
+          createdBy: ctx.user.id,
+        }).returning();
+
+        // إعطاء المدير صلاحية الوصول
+        await db.run(sql`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, assigned_by, status) VALUES (${ctx.user.id}, ${newCo.id}, 'cfo_admin', ${ctx.user.id}, 'active')`);
+
+        // نسخ إعدادات Odoo من المجموعة للشركة
+        await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${c.odooId}, ${c.name}, 1)`);
+
+        // ربط الشركة بالمجموعة
+        await db.run(sql`INSERT INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, sync_status) VALUES (${input.groupId}, ${newCo.id}, ${c.odooId}, ${c.name}, 'pending')`);
+
+        created.push({ odooId:c.odooId, companyId:newCo.id, name:c.name, status:"created" });
+      }
+
+      return { success:true, created };
+    }),
+
+  // قراءة أعضاء المجموعة مع حالة المزامنة
+  getMembers: protectedProcedure
+    .input(z.object({ groupId:z.number() }))
+    .query(async ({ input }) => {
+      const rows = await db.run(sql`
+        SELECT
+          m.*,
+          c.name as company_name,
+          c.currency,
+          c.industry,
+          (SELECT count(*) FROM journal_entries je WHERE je.company_id = m.company_id) as entry_count,
+          (SELECT count(*) FROM journal_entry_lines jl WHERE jl.company_id = m.company_id) as line_count,
+          (SELECT started_at FROM sync_logs sl WHERE sl.company_id = m.company_id ORDER BY started_at DESC LIMIT 1) as last_sync
+        FROM company_group_members m
+        JOIN companies c ON c.id = m.company_id
+        WHERE m.group_id = ${input.groupId}
+        ORDER BY m.id
+      `);
+      return (rows as any).rows || [];
+    }),
+
+  // حذف مجموعة
+  delete: adminProcedure
+    .input(z.object({ id:z.number() }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`DELETE FROM company_group_members WHERE group_id=${input.id}`);
+      await db.run(sql`DELETE FROM company_groups WHERE id=${input.id}`);
+      return { success:true };
+    }),
+
+  // تحديث حالة المزامنة لعضو
+  updateSyncStatus: adminProcedure
+    .input(z.object({ groupId:z.number(), companyId:z.number(), status:z.string() }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`UPDATE company_group_members SET sync_status=${input.status}, last_sync_at=${new Date().toISOString()} WHERE group_id=${input.groupId} AND company_id=${input.companyId}`);
+      return { success:true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   company: companyRouter,
@@ -650,5 +796,6 @@ export const appRouter = router({
   journal: journalRouter,
   ai: aiRouter,
   audit: auditRouter,
+  groups: groupsRouter,
 });
 export type AppRouter = typeof appRouter;
