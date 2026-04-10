@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite client",
-    "build": "vite build client",
+    "build": "vite build",
     "start": "node -e \"require('child_process').execSync('npx tsx server/seed.ts', {stdio:'inherit'})\" && npx tsx server/index.ts",
     "start:prod": "npm run build && npx tsx server/seed.ts && npx tsx server/index.ts",
     "db:push": "drizzle-kit push",

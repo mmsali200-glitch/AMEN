@@ -10,9 +10,6 @@ COPY . .
 # Build frontend
 RUN npm run build
 
-# Verify build output
-RUN ls -la dist/client/ && echo "✓ Frontend built"
-
 RUN mkdir -p data
 
 EXPOSE 3001
