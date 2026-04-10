@@ -85,36 +85,74 @@ export class OdooConnector {
 
   // ── دليل الحسابات (Chart of Accounts) ─────────────────────────────────────
   async getChartOfAccounts(companyId: number): Promise<any[]> {
-    return this.searchRead("account.account",
-      [["company_id","=",companyId]],
-      ["id","code","name","account_type","internal_type","internal_group","currency_id","deprecated","reconcile"],
-      5000
-    );
+    // Odoo 17+ uses company_ids (Many2many), older uses company_id
+    try {
+      return await this.searchRead("account.account",
+        [["company_ids","in",[companyId]]],
+        ["id","code","name","account_type","internal_type","internal_group","currency_id","deprecated","reconcile"],
+        5000
+      );
+    } catch {
+      try {
+        return await this.searchRead("account.account",
+          [["company_id","=",companyId]],
+          ["id","code","name","account_type","internal_type","internal_group","currency_id","deprecated","reconcile"],
+          5000
+        );
+      } catch {
+        // بدون فلتر شركة — يجلب كل الحسابات
+        return await this.searchRead("account.account",
+          [],
+          ["id","code","name","account_type","currency_id","deprecated"],
+          5000
+        );
+      }
+    }
   }
 
   // ── الدفاتر المحاسبية ─────────────────────────────────────────────────────
   async getJournals(companyId: number): Promise<any[]> {
-    return this.searchRead("account.journal",
-      [["company_id","=",companyId]],
-      ["id","name","code","type","currency_id","default_account_id"],
-      200
-    );
+    try {
+      return await this.searchRead("account.journal",
+        [["company_id","=",companyId]],
+        ["id","name","code","type","currency_id","default_account_id"],
+        200
+      );
+    } catch {
+      return await this.searchRead("account.journal",
+        [],
+        ["id","name","code","type"],
+        200
+      );
+    }
   }
 
   // ── الشركاء (عملاء + موردون) ──────────────────────────────────────────────
   async getPartners(): Promise<any[]> {
-    return this.searchRead("res.partner",
-      ["|",["customer_rank",">",0],["supplier_rank",">",0]],
-      ["id","name","ref","email","phone","mobile","vat","street","city","country_id",
-       "customer_rank","supplier_rank","is_company","commercial_company_name"],
-      5000
-    );
+    const fields = ["id","name","ref","email","phone","mobile","vat","street","city","country_id","customer_rank","supplier_rank","is_company"];
+    try {
+      return await this.searchRead("res.partner",
+        ["|",["customer_rank",">",0],["supplier_rank",">",0]],
+        fields, 5000
+      );
+    } catch {
+      // fallback بدون بعض الحقول
+      return await this.searchRead("res.partner",
+        ["|",["customer_rank",">",0],["supplier_rank",">",0]],
+        ["id","name","email","phone","customer_rank","supplier_rank"], 5000
+      );
+    }
   }
 
   // ── العملات ───────────────────────────────────────────────────────────────
   async getCurrencies(): Promise<any[]> {
-    return this.searchRead("res.currency", [["active","=",true]],
-      ["id","name","symbol","rate","active"], 100);
+    try {
+      return await this.searchRead("res.currency", [["active","=",true]],
+        ["id","name","symbol","rate","active"], 100);
+    } catch {
+      return await this.searchRead("res.currency", [["active","=",true]],
+        ["id","name","symbol","active"], 100);
+    }
   }
 
   // ── المنتجات ──────────────────────────────────────────────────────────────
@@ -125,17 +163,21 @@ export class OdooConnector {
 
   // ── الضرائب ───────────────────────────────────────────────────────────────
   async getTaxes(companyId: number): Promise<any[]> {
-    return this.searchRead("account.tax",
-      [["company_id","=",companyId]],
-      ["id","name","type_tax_use","amount","amount_type","active"], 500);
+    try {
+      return await this.searchRead("account.tax",
+        [["company_id","=",companyId]],
+        ["id","name","type_tax_use","amount","amount_type","active"], 500);
+    } catch {
+      return [];
+    }
   }
 
   // ── الحسابات التحليلية ────────────────────────────────────────────────────
   async getAnalyticAccounts(companyId: number): Promise<any[]> {
     try {
       return await this.searchRead("account.analytic.account",
-        [["company_id","in",[companyId,false]]],
-        ["id","name","code","balance"], 1000);
+        [],
+        ["id","name","code"], 1000);
     } catch { return []; }
   }
 
@@ -176,11 +218,21 @@ export class OdooConnector {
   // ── الرصيد الافتتاحي ──────────────────────────────────────────────────────
   async getOpeningBalanceLines(companyId: number, beforeDate: string): Promise<any[]> {
     if (!this.uid) await this.authenticate();
-    return this.searchRead("account.move.line",
-      [["company_id","=",companyId],["move_id.state","=","posted"],["date","<",beforeDate],
-       ["display_type","not in",["line_section","line_note"]]],
-      ["account_id","debit","credit","date"],
-      100000
-    );
+    try {
+      return await this.searchRead("account.move.line",
+        [["company_id","=",companyId],["move_id.state","=","posted"],["date","<",beforeDate],
+         ["display_type","not in",["line_section","line_note"]]],
+        ["account_id","debit","credit","date"],
+        100000
+      );
+    } catch {
+      // Odoo 17+ - try without company filter in domain
+      return await this.searchRead("account.move.line",
+        [["move_id.state","=","posted"],["move_id.company_id","=",companyId],["date","<",beforeDate],
+         ["display_type","not in",["line_section","line_note"]]],
+        ["account_id","debit","credit","date"],
+        100000
+      );
+    }
   }
 }
