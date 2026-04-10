@@ -56,3 +56,23 @@ app.listen(PORT, () => {
   console.log(`   Mode: ${process.env.NODE_ENV || "development"}`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 });
+
+// Direct Odoo test endpoint (debug)
+app.post("/odoo-test", async (req, res) => {
+  try {
+    const { url, database, username, password } = req.body;
+    const testUrl = url.replace(/\/$/, "");
+    const response = await fetch(`${testUrl}/web/session/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", method: "call", id: 1,
+        params: { db: database, login: username, password }
+      }),
+    });
+    const data = await response.json();
+    res.json({ raw: data, uid: data?.result?.uid, error: data?.error });
+  } catch (e: any) {
+    res.json({ error: e.message });
+  }
+});
