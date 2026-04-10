@@ -101,80 +101,75 @@ function DashboardPage({ companyId, co, onNavigate }:any) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 🔗 معالج Odoo الموحّد — إعداد + ربط + مزامنة في شاشة واحدة
 // ══════════════════════════════════════════════════════════════════════════════
-type WizardStep = "group"|"odoo"|"discover"|"select"|"link"|"sync";
+type WizardStep = "list"|"create"|"odoo"|"discover"|"select"|"link"|"sync";
 
 function OdooWizardPage({ companyId, co }:any) {
-  const [step, setStep]                 = useState<WizardStep>("group");
-  const [activeGroup, setActiveGroup]   = useState<any>(null);
-  const [newGroupName, setNewGroupName] = useState("");
-  const [odooForm, setOdooForm]         = useState({ url:"https://onesolutionc-roma.odoo.com", database:"onesolutionc-roma-main-17095422", username:"admin@admin.com", password:"KMM9999" });
-  const [discovered,  setDiscovered]    = useState<any[]>([]);
-  const [selected,    setSelected]      = useState<Set<number>>(new Set());
-  const [syncItems,   setSyncItems]     = useState<any[]>([]); // شركات جاهزة للمزامنة
-  const [linkLog,     setLinkLog]       = useState<{msg:string,type:string}[]>([]);
-  const [linkPct,     setLinkPct]       = useState(0);
-  const [linking,     setLinking]       = useState(false);
-  const [dateFrom,    setDateFrom]      = useState(`${new Date().getFullYear()}-01-01`);
-  const [dateTo,      setDateTo]        = useState(`${new Date().getFullYear()}-12-31`);
-  const [syncType,    setSyncType]      = useState("full");
-  const [incOpening,  setIncOpening]    = useState(true);
-  const [error,       setError]         = useState("");
+  const [step,         setStep]         = useState<WizardStep>("list");
+  const [activeGroup,  setActiveGroup]  = useState<any>(null);
+  const [newName,      setNewName]      = useState("");
+  const [odooForm,     setOdooForm]     = useState({
+    url:"https://onesolutionc-roma.odoo.com",
+    database:"onesolutionc-roma-main-17095422",
+    username:"admin@admin.com", password:"KMM9999"
+  });
+  const [discovered,  setDiscovered]   = useState<any[]>([]);
+  const [selected,    setSelected]     = useState<Set<number>>(new Set());
+  const [syncItems,   setSyncItems]    = useState<any[]>([]);
+  const [linkLog,     setLinkLog]      = useState<{msg:string,type:string}[]>([]);
+  const [linkPct,     setLinkPct]      = useState(0);
+  const [linking,     setLinking]      = useState(false);
+  const [dateFrom,    setDateFrom]     = useState(`${new Date().getFullYear()}-01-01`);
+  const [dateTo,      setDateTo]       = useState(`${new Date().getFullYear()}-12-31`);
+  const [syncType,    setSyncType]     = useState("full");
+  const [incOpening,  setIncOpening]   = useState(true);
+  const [error,       setError]        = useState("");
   const linkLogRef = useRef<HTMLDivElement>(null);
 
   const { data:groups, refetch:rGroups } = (trpc as any).groups.list.useQuery();
   const createGroup  = (trpc as any).groups.create.useMutation();
   const saveOdoo     = (trpc as any).groups.saveOdooConfig.useMutation();
   const testDiscover = (trpc as any).groups.testAndDiscover.useMutation();
-  const getMembers   = (trpc as any).groups.getMembers;
   const linkSingle   = (trpc as any).groups.linkSingleCompany.useMutation();
 
-  useEffect(() => { linkLogRef.current?.scrollTo(0, linkLogRef.current.scrollHeight); }, [linkLog]);
-  const addLog = (msg:string, type="info") => setLinkLog(l=>[...l,{msg,type}]);
+  useEffect(()=>{ linkLogRef.current?.scrollTo(0,linkLogRef.current.scrollHeight); },[linkLog]);
+  const addLog = (msg:string,type="info") => setLinkLog(l=>[...l,{msg,type}]);
   const toggle = (id:number) => setSelected(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
 
-  // ── اختيار مجموعة موجودة ──────────────────────────────────────────────────
-  const handlePickGroup = async (g:any) => {
+  // ── اختيار مجموعة موجودة → تحميل الأعضاء مباشرة للمزامنة ──────────────
+  const pickGroup = async (g:any) => {
     setActiveGroup(g);
     setError("");
     setOdooForm({ url:g.odoo_url||"", database:g.odoo_database||"", username:g.odoo_username||"", password:g.odoo_password||"" });
 
-    // إذا كانت المجموعة متصلة — نجلب الأعضاء مباشرة للمزامنة
     if (g.is_connected) {
       try {
-        const res = await fetch(`/trpc/groups.getMembers?input=${encodeURIComponent(JSON.stringify({ json:{ groupId:g.id } }))}`, {
-          headers: { Authorization:`Bearer ${localStorage.getItem("cfo_token")||""}` }
+        const res = await fetch(`/trpc/groups.getMembers?input=${encodeURIComponent(JSON.stringify({json:{groupId:g.id}}))}`, {
+          headers:{ Authorization:`Bearer ${localStorage.getItem("cfo_token")||""}` }
         });
         const data = await res.json();
         const members = data?.result?.data || data?.result || [];
         if (members.length > 0) {
-          setSyncItems(members.map((m:any) => ({
-            companyId: m.company_id,
-            name: m.company_name || m.odoo_company_name,
-            odooId: m.odoo_company_id,
-            currency: m.currency,
-          })));
+          setSyncItems(members.map((m:any)=>({ companyId:m.company_id, name:m.company_name||m.odoo_company_name, odooId:m.odoo_company_id, currency:m.currency||"KWD" })));
           setStep("sync");
           return;
         }
-      } catch(e) {}
+      } catch {}
     }
-    // غير متصل أو لا أعضاء → اذهب لصفحة Odoo
     setStep("odoo");
   };
 
-  // ── إنشاء مجموعة جديدة ────────────────────────────────────────────────────
-  const handleCreateGroup = () => {
-    if (!newGroupName.trim()) return;
+  // ── إنشاء مجموعة ─────────────────────────────────────────────────────────
+  const createAndNext = () => {
+    if (!newName.trim()) return;
     setError("");
-    createGroup.mutate({ name:newGroupName.trim(), baseCurrency:"KWD" }, {
-      onSuccess:(g:any)=>{ setActiveGroup(g); setNewGroupName(""); rGroups(); setStep("odoo"); },
+    createGroup.mutate({ name:newName.trim(), baseCurrency:"KWD" }, {
+      onSuccess:(g:any)=>{ setActiveGroup(g); setNewName(""); rGroups(); setStep("odoo"); },
       onError:(e:any)=>setError(e.message)
     });
   };
 
-  // ── حفظ Odoo والمضي قدماً ──────────────────────────────────────────────────
-  const handleSaveOdoo = async () => {
-    if (!activeGroup) return;
+  // ── حفظ Odoo ─────────────────────────────────────────────────────────────
+  const saveAndDiscover = async () => {
     setError("");
     try {
       await saveOdoo.mutateAsync({ groupId:activeGroup.id, ...odooForm });
@@ -183,8 +178,7 @@ function OdooWizardPage({ companyId, co }:any) {
   };
 
   // ── اكتشاف الشركات ────────────────────────────────────────────────────────
-  const handleDiscover = () => {
-    if (!activeGroup) return;
+  const discover = () => {
     setError(""); setDiscovered([]);
     testDiscover.mutate({ groupId:activeGroup.id }, {
       onSuccess:(d:any)=>{ setDiscovered(d.companies||[]); setStep("select"); },
@@ -192,8 +186,8 @@ function OdooWizardPage({ companyId, co }:any) {
     });
   };
 
-  // ── ربط الشركات المختارة ──────────────────────────────────────────────────
-  const handleLink = async () => {
+  // ── ربط الشركات ──────────────────────────────────────────────────────────
+  const doLink = async () => {
     const toLink = discovered.filter((c:any)=>selected.has(c.id));
     if (!toLink.length || !activeGroup) return;
     setStep("link"); setLinking(true); setLinkLog([]); setLinkPct(0);
@@ -201,12 +195,12 @@ function OdooWizardPage({ companyId, co }:any) {
 
     for (let i=0; i<toLink.length; i++) {
       const c = toLink[i];
-      const base = Math.round((i/toLink.length)*100);
-      addLog(`─── شركة ${i+1}/${toLink.length}: ${c.name} ───`,"sep");
-      setLinkPct(base+8); await new Promise(r=>setTimeout(r,250));
-      addLog("📝 إنشاء سجل الشركة..."); setLinkPct(base+18); await new Promise(r=>setTimeout(r,200));
-      addLog("🔑 إعطاء صلاحيات المستخدم..."); setLinkPct(base+28); await new Promise(r=>setTimeout(r,200));
-      addLog(`🔗 نسخ إعدادات Odoo (ID: ${c.id})...`); setLinkPct(base+38); await new Promise(r=>setTimeout(r,200));
+      const pct = Math.round((i/toLink.length)*100);
+      addLog(`─── ${i+1}/${toLink.length}: ${c.name} ───`,"sep");
+      setLinkPct(pct+5);  await new Promise(r=>setTimeout(r,200));
+      addLog(`📝 إنشاء سجل الشركة...`); setLinkPct(pct+15); await new Promise(r=>setTimeout(r,200));
+      addLog(`🔑 إعطاء صلاحيات المستخدم`); setLinkPct(pct+25); await new Promise(r=>setTimeout(r,200));
+      addLog(`🔗 نسخ إعدادات Odoo (ID: ${c.id})`); setLinkPct(pct+35); await new Promise(r=>setTimeout(r,200));
       try {
         const res = await linkSingle.mutateAsync({ groupId:activeGroup.id, odooId:c.id, name:c.name, currency:c.currency||"KWD" });
         addLog(`✅ ${c.name} — ${res.status==="created"?"تم الإنشاء":"موجودة مسبقاً"}`,"success");
@@ -218,214 +212,247 @@ function OdooWizardPage({ companyId, co }:any) {
       setLinkPct(Math.round(((i+1)/toLink.length)*100));
     }
 
-    addLog("─────────────────────────────────────","sep");
-    addLog(`🎉 اكتمل الربط — ${results.filter(r=>r.status==="created").length} شركة جديدة`,"success");
+    addLog(`─────────────────────────────────────`,"sep");
+    addLog(`🎉 اكتمل — ${results.filter(r=>r.status==="created").length} شركة جديدة`,"success");
     setLinking(false);
     setSyncItems(results.filter(r=>r.companyId));
     rGroups();
   };
 
-  // ── STEPS BAR ──────────────────────────────────────────────────────────────
+  // ── شريط الخطوات ─────────────────────────────────────────────────────────
   const STEPS = [
-    {id:"group",   label:"المجموعة",  icon:"🏛️"},
-    {id:"odoo",    label:"Odoo",       icon:"🔌"},
-    {id:"discover",label:"اكتشاف",    icon:"🔍"},
-    {id:"select",  label:"اختيار",    icon:"☑️"},
-    {id:"link",    label:"ربط",       icon:"🔗"},
-    {id:"sync",    label:"مزامنة",    icon:"🔄"},
+    {id:"list",    icon:"🏛️", label:"الشركة القابضة"},
+    {id:"create",  icon:"✨", label:"الشركة القابضة"},
+    {id:"odoo",    icon:"🔌", label:"بيانات Odoo"},
+    {id:"discover",icon:"🔍", label:"اكتشاف"},
+    {id:"select",  icon:"☑️", label:"اختيار الشركات"},
+    {id:"link",    icon:"🔗", label:"ربط وإنشاء"},
+    {id:"sync",    icon:"🔄", label:"مزامنة البيانات"},
   ];
-  const stepIdx = STEPS.findIndex(s=>s.id===step);
+  const visibleSteps = ["odoo","discover","select","link","sync"];
+  const stepIdx = visibleSteps.indexOf(step);
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      <PageTitle title="🔗 إعداد وربط Odoo + المزامنة" sub="جميع الخطوات في مكان واحد"/>
+      <PageTitle title="🔗 إعداد Odoo والمزامنة" sub="إدارة الشركات القابضة + استيراد البيانات المحاسبية"/>
 
-      {/* ── شريط الخطوات ── */}
-      <div style={{ display:"flex", alignItems:"center", marginBottom:22, padding:"14px 18px", background:C.sidebar, borderRadius:12, border:`1px solid ${C.border}`, overflowX:"auto" }}>
-        {STEPS.map((s,i)=>{
-          const done=i<stepIdx, cur=s.id===step;
-          return (
-            <div key={s.id} style={{ display:"flex", alignItems:"center", flexShrink:0 }}>
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
-                <div style={{ width:34,height:34,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
-                  fontSize:done?12:15,fontWeight:700,
-                  background:done?C.teal:cur?C.primary:"#F1F5F9",
-                  color:done||cur?"#fff":C.muted,
-                  boxShadow:cur?`0 0 0 3px ${C.primarySoft}`:"none",transition:"all 0.3s" }}>
-                  {done?"✓":s.icon}
+      {/* ── شريط الخطوات (يظهر بعد اختيار المجموعة) ── */}
+      {!["list","create"].includes(step) && (
+        <div style={{ display:"flex", alignItems:"center", gap:0, marginBottom:18, padding:"12px 18px", background:C.sidebar, borderRadius:12, border:`1px solid ${C.border}`, overflowX:"auto" }}>
+          {visibleSteps.map((s,i)=>{
+            const done=i<stepIdx, cur=s===step;
+            const icons:Record<string,string> = { odoo:"🔌", discover:"🔍", select:"☑️", link:"🔗", sync:"🔄" };
+            const labels:Record<string,string> = { odoo:"بيانات Odoo", discover:"اكتشاف", select:"اختيار", link:"ربط", sync:"مزامنة" };
+            return (
+              <div key={s} style={{ display:"flex", alignItems:"center", flexShrink:0 }}>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
+                  <div style={{ width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:done?11:14,fontWeight:700,
+                    background:done?C.teal:cur?C.primary:"#F1F5F9",
+                    color:done||cur?"#fff":C.muted,
+                    boxShadow:cur?`0 0 0 3px ${C.primarySoft}`:"none",transition:"all 0.25s" }}>
+                    {done?"✓":icons[s]}
+                  </div>
+                  <span style={{ fontSize:9,color:done?C.teal:cur?C.primary:C.muted,fontWeight:done||cur?700:400,whiteSpace:"nowrap" }}>{labels[s]}</span>
                 </div>
-                <span style={{ fontSize:9,whiteSpace:"nowrap",color:done?C.teal:cur?C.primary:C.muted,fontWeight:done||cur?700:400 }}>{s.label}</span>
+                {i<visibleSteps.length-1 && <div style={{ width:32,height:2,background:done?C.teal:C.border,margin:"0 3px",marginBottom:14,borderRadius:1,flexShrink:0 }}/>}
               </div>
-              {i<STEPS.length-1 && <div style={{ width:28,height:2,background:done?C.teal:C.border,margin:"0 4px",marginBottom:14,borderRadius:1,flexShrink:0 }}/>}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Active group banner */}
-      {activeGroup && step!=="group" && (
+      {/* الشركة النشطة */}
+      {activeGroup && !["list","create"].includes(step) && (
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 14px", borderRadius:9, background:C.greenLight, border:`1px solid #A7F3D0`, marginBottom:12 }}>
-          <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:13 }}>🏛️ المجموعة النشطة: {activeGroup.name}</p>
-          <button onClick={()=>{ setActiveGroup(null); setStep("group"); setDiscovered([]); setSelected(new Set()); setSyncItems([]); }}
-            style={{ padding:"3px 10px", borderRadius:6, border:`1px solid #A7F3D0`, background:"rgba(255,255,255,0.7)", color:C.green, cursor:"pointer", fontSize:11 }}>تغيير</button>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <span style={{ fontSize:18 }}>🏛️</span>
+            <div>
+              <p style={{ color:C.green, fontWeight:800, margin:0, fontSize:13 }}>{activeGroup.name}</p>
+              <p style={{ color:"#065F46", fontSize:11, margin:0 }}>{activeGroup.odoo_url||odooForm.url}</p>
+            </div>
+          </div>
+          <button onClick={()=>{ setActiveGroup(null); setStep("list"); setSyncItems([]); setDiscovered([]); setSelected(new Set()); }}
+            style={{ padding:"3px 10px", borderRadius:6, border:`1px solid #A7F3D0`, background:"rgba(255,255,255,0.7)", color:C.green, cursor:"pointer", fontSize:11 }}>
+            تغيير ←
+          </button>
         </div>
       )}
 
       {error && <div style={{ padding:"10px 14px", borderRadius:8, background:C.redLight, border:`1px solid #FECACA`, color:C.red, fontSize:12, marginBottom:12 }}>⚠️ {error}</div>}
 
-      {/* ══ STEP 1: اختيار / إنشاء مجموعة ══════════════════════════════════════ */}
-      {step==="group" && (
-        <div style={{ display:"grid", gridTemplateColumns:"3fr 2fr", gap:14 }}>
-          {/* Existing groups */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>🏛️ مجموعاتك القابضة</p>
-            {(!groups||groups.length===0) ? (
-              <div style={{ padding:"24px", textAlign:"center" }}>
-                <div style={{ fontSize:36, marginBottom:10 }}>🏛️</div>
-                <p style={{ color:C.muted, fontSize:13 }}>لا توجد مجموعات بعد</p>
-              </div>
-            ) : (
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {groups.map((g:any)=>(
-                  <button key={g.id} onClick={()=>handlePickGroup(g)}
-                    style={{ padding:"14px 16px", borderRadius:10, border:`1.5px solid ${C.border}`, background:"#fff", cursor:"pointer", textAlign:"right", display:"flex", justifyContent:"space-between", alignItems:"center", transition:"all 0.15s" }}
-                    onMouseEnter={e=>{(e.currentTarget as any).style.borderColor=C.primary;(e.currentTarget as any).style.background=C.primaryLight;}}
-                    onMouseLeave={e=>{(e.currentTarget as any).style.borderColor=C.border;(e.currentTarget as any).style.background="#fff";}}>
-                    <div>
-                      <p style={{ fontWeight:800, color:C.text, margin:"0 0 4px", fontSize:14 }}>{g.name}</p>
-                      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                        <Badge label={g.is_connected?"✅ متصل بـ Odoo":"○ غير متصل"} bg={g.is_connected?C.greenLight:"#F1F5F9"} color={g.is_connected?C.green:C.muted}/>
-                        {g.odoo_database && <Badge label={g.odoo_database.slice(0,24)+"..."} bg={C.primaryLight} color={C.primary}/>}
+      {/* ══ الشاشة الرئيسية — قائمة الشركات القابضة ══════════════════════════ */}
+      {step==="list" && (
+        <div>
+          {/* مجموعات موجودة */}
+          {groups?.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:"0 0 10px" }}>🏛️ شركاتك القابضة المرتبطة بـ Odoo</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {groups.map((g:any) => (
+                  <div key={g.id} style={{ background:C.sidebar, borderRadius:14, border:`1px solid ${C.border}`, overflow:"hidden", boxShadow:"0 1px 8px rgba(0,0,0,0.04)" }}>
+                    {/* Header */}
+                    <div style={{ padding:"16px 20px", display:"flex", gap:14, alignItems:"center" }}>
+                      <div style={{ width:46,height:46,borderRadius:12,background:"linear-gradient(135deg,#EFF6FF,#F0FDFA)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0 }}>🏛️</div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontWeight:800, color:C.text, margin:"0 0 4px", fontSize:15 }}>{g.name}</p>
+                        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                          {g.is_connected
+                            ? <Badge label="✅ متصل بـ Odoo" bg={C.greenLight} color={C.green}/>
+                            : <Badge label="○ غير متصل" bg="#F1F5F9" color={C.muted}/>}
+                          {g.odoo_url && <span style={{ fontSize:11, color:C.muted }}>{g.odoo_url.replace("https://","")}</span>}
+                          {g.odoo_database && <Badge label={g.odoo_database.slice(0,28)+(g.odoo_database.length>28?"...":"")} bg={C.primaryLight} color={C.primary}/>}
+                          {g.odoo_version && <Badge label={`Odoo ${g.odoo_version}`} bg={C.purpleLight} color={C.purple}/>}
+                        </div>
                       </div>
-                      {g.is_connected && <p style={{ fontSize:11, color:C.muted, margin:"4px 0 0" }}>اضغط للمتابعة إلى المزامنة مباشرة →</p>}
+                      <div style={{ display:"flex", gap:8, flexShrink:0 }}>
+                        {g.is_connected ? (
+                          <button onClick={()=>pickGroup(g)}
+                            style={{ padding:"9px 20px", borderRadius:9, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, boxShadow:"0 2px 8px rgba(37,99,235,0.2)" }}>
+                            🔄 عرض الشركات والمزامنة
+                          </button>
+                        ) : (
+                          <button onClick={()=>{ setActiveGroup(g); setStep("odoo"); setOdooForm({url:g.odoo_url||"",database:g.odoo_database||"",username:g.odoo_username||"",password:g.odoo_password||""}); }}
+                            style={{ padding:"9px 18px", borderRadius:9, border:`1px solid ${C.primary}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                            ⚙️ إعداد Odoo
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ display:"flex", gap:6, alignItems:"center", flexShrink:0 }}>
-                      {g.is_connected
-                        ? <span style={{ padding:"5px 12px", borderRadius:8, background:"linear-gradient(135deg,#059669,#0D9488)", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>🔄 مزامنة</span>
-                        : <span style={{ padding:"5px 12px", borderRadius:8, background:C.primaryLight, color:C.primary, fontSize:12, fontWeight:700 }}>⚙️ إعداد</span>}
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
-            )}
-          </Card>
+            </div>
+          )}
 
-          {/* Create new */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>✨ مجموعة قابضة جديدة</p>
-            <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>اسم المجموعة</label>
-            <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="مثال: مجموعة الخليج القابضة"
-              onKeyDown={e=>e.key==="Enter"&&handleCreateGroup()}
-              style={{ width:"100%", padding:"10px 14px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:13, outline:"none", marginBottom:14, boxSizing:"border-box" as any }}/>
-            <button onClick={handleCreateGroup} disabled={!newGroupName.trim()||createGroup.isPending}
-              style={{ width:"100%", padding:"11px", borderRadius:10, border:"none", background:!newGroupName.trim()?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
-              {createGroup.isPending?"جاري الإنشاء...":"إنشاء والمتابعة ←"}
-            </button>
-            <div style={{ marginTop:14, padding:"12px", borderRadius:9, background:"#F8FAFF", border:`1px solid ${C.border}` }}>
-              <p style={{ fontSize:11, color:C.muted, margin:0, lineHeight:1.8 }}>
-                <strong style={{ color:C.text }}>الهدف:</strong> الشركة القابضة تجمع عدة شركات من قاعدة بيانات Odoo واحدة وتدير مزامنة بياناتها المحاسبية
-              </p>
+          {/* إنشاء مجموعة جديدة */}
+          <Card style={{ padding:"20px 22px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 4px" }}>
+              {groups?.length > 0 ? "➕ إضافة شركة قابضة جديدة" : "🏛️ إنشاء شركة قابضة جديدة"}
+            </p>
+            <p style={{ color:C.textSec, fontSize:12, margin:"0 0 14px", lineHeight:1.6 }}>
+              الشركة القابضة تجمع عدة شركات من قاعدة بيانات Odoo واحدة وتدير مزامنة بياناتها المحاسبية دفعة واحدة
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="اسم الشركة القابضة (مثال: مجموعة روما القابضة)"
+                onKeyDown={e=>e.key==="Enter"&&createAndNext()}
+                style={{ flex:1, padding:"10px 14px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:13, outline:"none" }}/>
+              <button onClick={createAndNext} disabled={!newName.trim()||createGroup.isPending}
+                style={{ padding:"10px 22px", borderRadius:9, border:"none", background:!newName.trim()?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, whiteSpace:"nowrap" }}>
+                {createGroup.isPending?"جاري...":"إنشاء ←"}
+              </button>
             </div>
           </Card>
         </div>
       )}
 
-      {/* ══ STEP 2: Odoo Config ════════════════════════════════════════════════ */}
+      {/* ══ STEP: Odoo Config ═════════════════════════════════════════════════ */}
       {step==="odoo" && (
         <Card style={{ padding:"24px" }}>
-          <p style={{ fontWeight:800, fontSize:15, color:C.text, margin:"0 0 16px" }}>🔌 بيانات الاتصال بـ Odoo</p>
+          <p style={{ fontWeight:800, fontSize:15, color:C.text, margin:"0 0 4px" }}>🔌 بيانات الاتصال بـ Odoo</p>
+          <p style={{ color:C.textSec, fontSize:12, margin:"0 0 16px" }}>أدخل بيانات الخادم لاكتشاف الشركات داخل قاعدة البيانات</p>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
-            {([["رابط الخادم (URL)","url","text"],["اسم قاعدة البيانات","database","text"],["اسم المستخدم","username","email"],["كلمة المرور","password","password"]] as [string,string,string][]).map(([l,k,t])=>(
+            {([
+              ["رابط الخادم (URL)","url","text","https://"],
+              ["اسم قاعدة البيانات","database","text","mydb"],
+              ["اسم المستخدم","username","email","admin"],
+              ["كلمة المرور","password","password","•••"],
+            ] as [string,string,string,string][]).map(([l,k,t,ph])=>(
               <div key={k}>
                 <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>{l}</label>
-                <input type={t} value={(odooForm as any)[k]} onChange={e=>setOdooForm((f:any)=>({...f,[k]:e.target.value}))}
+                <input type={t} value={(odooForm as any)[k]} onChange={e=>setOdooForm((f:any)=>({...f,[k]:e.target.value}))} placeholder={ph}
                   style={{ width:"100%", padding:"9px 12px", borderRadius:9, border:`1.5px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none", direction:"ltr", textAlign:"left", boxSizing:"border-box" as any }}/>
               </div>
             ))}
           </div>
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={handleSaveOdoo} disabled={saveOdoo.isPending}
+            <button onClick={saveAndDiscover} disabled={saveOdoo.isPending}
               style={{ padding:"11px 28px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:700 }}>
               {saveOdoo.isPending?"جاري الحفظ...":"حفظ والمتابعة ←"}
             </button>
+            <button onClick={()=>setStep("list")} style={{ padding:"11px 16px", borderRadius:10, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>← رجوع</button>
           </div>
         </Card>
       )}
 
-      {/* ══ STEP 3: Discover ══════════════════════════════════════════════════ */}
+      {/* ══ STEP: Discover ════════════════════════════════════════════════════ */}
       {step==="discover" && (
-        <Card style={{ padding:"40px 24px", textAlign:"center" }}>
+        <Card style={{ padding:"44px 24px", textAlign:"center" }}>
           <div style={{ fontSize:52, marginBottom:14 }}>🔍</div>
           <h3 style={{ fontSize:18, fontWeight:800, color:C.text, margin:"0 0 8px" }}>اكتشاف الشركات في Odoo</h3>
-          <p style={{ color:C.muted, fontSize:13, margin:"0 0 24px" }}>{odooForm.url}</p>
+          <p style={{ color:C.textSec, fontSize:14, margin:"0 0 6px" }}>سيتصل النظام بـ Odoo ويقرأ جميع الشركات في قاعدة البيانات</p>
+          <p style={{ color:C.muted, fontSize:12, margin:"0 0 24px" }}>{odooForm.url}</p>
+
           {testDiscover.isPending ? (
             <div>
-              <div style={{ display:"flex", gap:8, justifyContent:"center", alignItems:"center", marginBottom:16 }}>
+              <div style={{ display:"flex", gap:10, justifyContent:"center", alignItems:"center", marginBottom:16 }}>
                 <div style={{ width:22,height:22,border:`3px solid ${C.primaryLight}`,borderTopColor:C.primary,borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>
                 <span style={{ fontSize:14, color:C.primary, fontWeight:600 }}>جاري الاتصال وقراءة الشركات...</span>
               </div>
-              <div style={{ background:"#F1F5F9", borderRadius:8, height:6, maxWidth:280, margin:"0 auto", overflow:"hidden" }}>
-                <div style={{ width:"70%", height:"100%", background:`linear-gradient(90deg,${C.primary},${C.teal})`, borderRadius:8, animation:"pulse 1.2s ease-in-out infinite" }}/>
+              <div style={{ background:"#F1F5F9",borderRadius:8,height:6,maxWidth:280,margin:"0 auto",overflow:"hidden" }}>
+                <div style={{ width:"65%",height:"100%",background:`linear-gradient(90deg,${C.primary},${C.teal})`,borderRadius:8 }}/>
               </div>
             </div>
           ) : (
-            <button onClick={handleDiscover}
-              style={{ padding:"14px 40px", borderRadius:12, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:15, fontWeight:700, boxShadow:"0 4px 14px rgba(37,99,235,0.3)" }}>
-              🔍 اكتشف الشركات الآن
-            </button>
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+              <button onClick={discover} style={{ padding:"14px 40px", borderRadius:12, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:15, fontWeight:700, boxShadow:"0 4px 14px rgba(37,99,235,0.3)" }}>
+                🔍 اكتشف الشركات الآن
+              </button>
+              <button onClick={()=>setStep("odoo")} style={{ padding:"14px 16px", borderRadius:12, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>← رجوع</button>
+            </div>
           )}
         </Card>
       )}
 
-      {/* ══ STEP 4: Select ════════════════════════════════════════════════════ */}
+      {/* ══ STEP: Select ══════════════════════════════════════════════════════ */}
       {step==="select" && (
         <>
           <Card style={{ padding:"12px 18px", marginBottom:12, background:C.greenLight, border:`1px solid #A7F3D0` }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <p style={{ fontWeight:700, color:C.green, margin:0 }}>✅ تم اكتشاف {discovered.length} شركة في Odoo</p>
+              <p style={{ fontWeight:700, color:C.green, margin:0, fontSize:14 }}>✅ تم اكتشاف {discovered.length} شركة في قاعدة البيانات</p>
               <Badge label={`${selected.size} مختارة`} bg="rgba(255,255,255,0.8)" color={C.green}/>
             </div>
           </Card>
-          <Card style={{ padding:"16px 20px", marginBottom:12 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-              <p style={{ fontWeight:700, fontSize:14, color:C.text, margin:0 }}>🏢 اختر الشركات المطلوبة</p>
+
+          <Card style={{ padding:"18px 20px", marginBottom:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:0 }}>🏢 اختر الشركات التي تريد استيراد بياناتها</p>
               <div style={{ display:"flex", gap:8 }}>
-                <button onClick={()=>setSelected(new Set(discovered.map((c:any)=>c.id)))} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.primary}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:11, fontWeight:600 }}>تحديد الكل</button>
-                <button onClick={()=>setSelected(new Set())} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:11 }}>إلغاء الكل</button>
+                <button onClick={()=>setSelected(new Set(discovered.map((c:any)=>c.id)))} style={{ padding:"5px 14px", borderRadius:7, border:`1px solid ${C.primary}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:12, fontWeight:600 }}>تحديد الكل</button>
+                <button onClick={()=>setSelected(new Set())} style={{ padding:"5px 12px", borderRadius:7, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:12 }}>إلغاء الكل</button>
               </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:10 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:10 }}>
               {discovered.map((c:any)=>(
                 <div key={c.id} onClick={()=>toggle(c.id)}
-                  style={{ padding:"13px 15px", borderRadius:10, border:`2px solid ${selected.has(c.id)?C.primary:C.border}`, background:selected.has(c.id)?C.primaryLight:"#fff", cursor:"pointer", transition:"all 0.12s" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontWeight:700, color:selected.has(c.id)?C.primary:C.text, margin:"0 0 4px", fontSize:13 }}>{c.name}</p>
-                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                        {c.currency&&<Badge label={c.currency} bg={selected.has(c.id)?C.primarySoft:"#F1F5F9"} color={selected.has(c.id)?C.primary:C.textSec}/>}
-                        {c.city&&<span style={{ fontSize:10, color:C.muted }}>📍{c.city}</span>}
-                        <span style={{ fontSize:10, color:C.muted }}>ID:{c.id}</span>
-                      </div>
+                  style={{ padding:"14px 16px", borderRadius:11, border:`2px solid ${selected.has(c.id)?C.primary:C.border}`, background:selected.has(c.id)?C.primaryLight:"#fff", cursor:"pointer", transition:"all 0.12s", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div style={{ flex:1 }}>
+                    <p style={{ fontWeight:700, color:selected.has(c.id)?C.primary:C.text, margin:"0 0 5px", fontSize:13 }}>{c.name}</p>
+                    <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                      {c.currency&&<Badge label={c.currency} bg={selected.has(c.id)?C.primarySoft:"#F1F5F9"} color={selected.has(c.id)?C.primary:C.textSec}/>}
+                      {c.city&&<span style={{ fontSize:10, color:C.muted }}>📍{c.city}</span>}
+                      <span style={{ fontSize:10, color:C.muted, fontFamily:"monospace" }}>#{c.id}</span>
                     </div>
-                    <div style={{ width:20,height:20,borderRadius:4,border:`2px solid ${selected.has(c.id)?C.primary:C.muted}`,background:selected.has(c.id)?C.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                      {selected.has(c.id)&&<span style={{ color:"#fff",fontSize:11,fontWeight:800 }}>✓</span>}
-                    </div>
+                    {c.vat&&<p style={{ fontSize:10, color:C.muted, margin:"4px 0 0" }}>رقم ضريبي: {c.vat}</p>}
+                  </div>
+                  <div style={{ width:22,height:22,borderRadius:5,border:`2px solid ${selected.has(c.id)?C.primary:C.muted}`,background:selected.has(c.id)?C.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginRight:4 }}>
+                    {selected.has(c.id)&&<span style={{ color:"#fff",fontSize:12,fontWeight:900 }}>✓</span>}
                   </div>
                 </div>
               ))}
             </div>
           </Card>
+
           <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
             <button onClick={()=>setStep("discover")} style={{ padding:"10px 18px", borderRadius:9, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:13 }}>← رجوع</button>
-            <button onClick={handleLink} disabled={selected.size===0}
-              style={{ padding:"11px 28px", borderRadius:10, border:"none", background:selected.size===0?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:selected.size===0?"default":"pointer", fontSize:14, fontWeight:700 }}>
-              🔗 ربط {selected.size} شركة مختارة →
+            <button onClick={doLink} disabled={selected.size===0}
+              style={{ padding:"11px 28px", borderRadius:10, border:"none", background:selected.size===0?"#94A3B8":"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:selected.size===0?"default":"pointer", fontSize:14, fontWeight:700, boxShadow:selected.size>0?"0 2px 8px rgba(37,99,235,0.3)":"none" }}>
+              🔗 ربط وإنشاء {selected.size} شركة →
             </button>
           </div>
         </>
       )}
 
-      {/* ══ STEP 5: Linking ═══════════════════════════════════════════════════ */}
+      {/* ══ STEP: Link Progress ═══════════════════════════════════════════════ */}
       {step==="link" && (
         <Card style={{ padding:"24px" }}>
           <div style={{ marginBottom:16 }}>
@@ -434,88 +461,84 @@ function OdooWizardPage({ companyId, co }:any) {
               <span style={{ fontSize:13, color:linking?C.primary:C.green, fontWeight:700 }}>{linkPct}%</span>
             </div>
             <div style={{ background:"#F1F5F9", borderRadius:8, height:10, overflow:"hidden" }}>
-              <div style={{ width:`${linkPct}%`, height:"100%", background:linking?"linear-gradient(90deg,#2563EB,#0D9488)":"linear-gradient(90deg,#059669,#0D9488)", borderRadius:8, transition:"width 0.4s ease" }}/>
+              <div style={{ width:`${linkPct}%`,height:"100%",background:linking?"linear-gradient(90deg,#2563EB,#0D9488)":"linear-gradient(90deg,#059669,#0D9488)",borderRadius:8,transition:"width 0.4s ease" }}/>
             </div>
           </div>
 
           <div style={{ background:"#0F172A", borderRadius:12, overflow:"hidden", marginBottom:16 }}>
             <div style={{ padding:"9px 14px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex", alignItems:"center", gap:8 }}>
-              <div style={{ display:"flex", gap:4 }}>
-                {["#EF4444","#F59E0B","#10B981"].map(c=><div key={c} style={{ width:9,height:9,borderRadius:"50%",background:c }}/>)}
-              </div>
-              <span style={{ fontSize:11, color:"#64748B", fontFamily:"monospace" }}>cfo-system — ربط الشركات</span>
+              {["#EF4444","#F59E0B","#10B981"].map(c=><div key={c} style={{ width:9,height:9,borderRadius:"50%",background:c }}/>)}
+              <span style={{ fontSize:11, color:"#64748B", fontFamily:"monospace", marginRight:"auto" }}>cfo-system — ربط الشركات</span>
             </div>
             <div ref={linkLogRef} style={{ padding:"12px 14px", maxHeight:220, overflowY:"auto", display:"flex", flexDirection:"column", gap:4 }}>
               {linkLog.map((l,i)=>(
                 <p key={i} style={{ fontSize:11, margin:0, fontFamily:"monospace",
                   color:l.type==="sep"?"#1E3A5F":l.type==="success"?"#34D399":l.type==="error"?"#F87171":"#94A3B8" }}>{l.msg}</p>
               ))}
-              {linking&&<span style={{ fontSize:11, color:"#2563EB" }}>$ <span style={{ animation:"blink 1s step-end infinite", display:"inline-block", width:7, height:13, background:"#2563EB", verticalAlign:"middle" }}/></span>}
+              {linking&&<span style={{ fontSize:11,color:"#2563EB" }}>$ <span style={{ animation:"blink 1s step-end infinite",display:"inline-block",width:7,height:13,background:"#2563EB",verticalAlign:"middle" }}/></span>}
             </div>
           </div>
 
-          {!linking && syncItems.length>0 && (
-            <button onClick={()=>setStep("sync")}
-              style={{ width:"100%", padding:"13px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:700 }}>
-              🔄 المتابعة إلى المزامنة ←
+          {!linking && syncItems.length > 0 && (
+            <button onClick={()=>setStep("sync")} style={{ width:"100%", padding:"13px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#2563EB,#0D9488)", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:700 }}>
+              🔄 المتابعة إلى مزامنة البيانات ←
             </button>
           )}
         </Card>
       )}
 
-      {/* ══ STEP 6: Sync ══════════════════════════════════════════════════════ */}
+      {/* ══ STEP: Sync ════════════════════════════════════════════════════════ */}
       {step==="sync" && (
         <>
-          {syncItems.length===0 ? (
+          {/* إعدادات المزامنة */}
+          <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 12px" }}>⚙️ إعدادات المزامنة — تنطبق على جميع الشركات</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+              <div>
+                <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>نوع المزامنة</label>
+                <select value={syncType} onChange={e=>setSyncType(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
+                  <option value="full">كاملة — من الصفر (موصى به)</option>
+                  <option value="incremental">تزايدية — الجديد فقط</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>من تاريخ</label>
+                <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+              </div>
+              <div>
+                <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>إلى تاريخ</label>
+                <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+              </div>
+            </div>
+            <label onClick={()=>setIncOpening(o=>!o)} style={{ display:"flex", gap:9, alignItems:"center", cursor:"pointer", marginTop:10, padding:"9px 12px", borderRadius:8, background:incOpening?C.primaryLight:C.bg, border:`1px solid ${incOpening?C.primary:C.border}` }}>
+              <div style={{ width:16,height:16,borderRadius:3,border:`2px solid ${incOpening?C.primary:C.muted}`,background:incOpening?C.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                {incOpening&&<span style={{ color:"#fff",fontSize:10,fontWeight:800 }}>✓</span>}
+              </div>
+              <span style={{ fontSize:12, color:incOpening?C.primary:C.text, fontWeight:600 }}>تضمين الرصيد الافتتاحي — ضروري لصحة ميزان المراجعة 6 أعمدة</span>
+            </label>
+          </Card>
+
+          {/* بطاقات الشركات */}
+          {syncItems.length === 0 ? (
             <Card style={{ padding:"32px", textAlign:"center" }}>
               <div style={{ fontSize:36, marginBottom:12 }}>⚠️</div>
-              <p style={{ color:C.textSec, fontSize:14, fontWeight:600, margin:"0 0 6px" }}>لا توجد شركات مرتبطة بهذه المجموعة</p>
-              <p style={{ color:C.muted, fontSize:12, margin:"0 0 16px" }}>اذهب للخطوة السابقة لاكتشاف الشركات وربطها</p>
+              <p style={{ color:C.textSec, fontSize:14, fontWeight:600, margin:"0 0 14px" }}>لا توجد شركات مرتبطة بعد</p>
               <button onClick={()=>setStep("discover")} style={{ padding:"9px 22px", borderRadius:9, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>← اكتشف الشركات</button>
             </Card>
           ) : (
-            <>
-              {/* Sync settings */}
-              <Card style={{ padding:"16px 20px", marginBottom:14 }}>
-                <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 12px" }}>⚙️ إعدادات المزامنة</p>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:10 }}>
-                  <div>
-                    <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>النوع</label>
-                    <select value={syncType} onChange={e=>setSyncType(e.target.value)} style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
-                      <option value="full">كاملة — من الصفر</option>
-                      <option value="incremental">تزايدية — الجديد فقط</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>من تاريخ</label>
-                    <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
-                  </div>
-                  <div>
-                    <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 }}>إلى تاريخ</label>
-                    <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
-                  </div>
-                </div>
-                <label onClick={()=>setIncOpening(o=>!o)} style={{ display:"flex", gap:8, alignItems:"center", cursor:"pointer", padding:"8px 10px", borderRadius:8, background:incOpening?C.primaryLight:C.bg, border:`1px solid ${incOpening?C.primary:C.border}` }}>
-                  <div style={{ width:16,height:16,borderRadius:3,border:`2px solid ${incOpening?C.primary:C.muted}`,background:incOpening?C.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
-                    {incOpening&&<span style={{ color:"#fff",fontSize:10,fontWeight:800 }}>✓</span>}
-                  </div>
-                  <span style={{ fontSize:12, color:incOpening?C.primary:C.text, fontWeight:600 }}>تضمين الرصيد الافتتاحي (ضروري لصحة ميزان المراجعة)</span>
-                </label>
-              </Card>
-
-              {/* Company sync cards */}
-              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-                {syncItems.map((item:any)=>(
-                  <SyncCard key={item.companyId||item.name} item={item} dateFrom={dateFrom} dateTo={dateTo} syncType={syncType} incOpening={incOpening}/>
-                ))}
-              </div>
-            </>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {syncItems.map((item:any)=>(
+                <SyncCard key={item.companyId||item.name} item={item} dateFrom={dateFrom} dateTo={dateTo} syncType={syncType} incOpening={incOpening}/>
+              ))}
+            </div>
           )}
         </>
       )}
     </div>
   );
 }
+
+
 
 // ── SyncCard: بطاقة مزامنة لكل شركة ──────────────────────────────────────────
 function SyncCard({ item, dateFrom, dateTo, syncType, incOpening }:any) {
