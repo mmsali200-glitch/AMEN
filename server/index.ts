@@ -299,3 +299,44 @@ app.post("/fix-lines/:companyId", async (req, res) => {
     });
   } catch(e:any) { res.json({ error: e.message }); }
 });
+
+// ── Raw Report Test ────────────────────────────────────────────────────────────
+app.get("/raw/:companyId/:report", async (req, res) => {
+  try {
+    const { createClient } = await import("@libsql/client");
+    const path2 = await import("path");
+    const { fileURLToPath: ftu } = await import("url");
+    const __d = path2.dirname(ftu(import.meta.url));
+    const client = createClient({ url: `file:${path2.join(__d, "..", "data", "cfo.db")}` });
+    const cid = parseInt(req.params.companyId)||0;
+    const report = req.params.report;
+    const year = new Date().getFullYear();
+    const dF = `${year}-01-01`, dT = `${year}-12-31`;
+
+    let result: any = {};
+
+    if (report === "summary") {
+      const e  = await client.execute(`SELECT count(*) n FROM journal_entries WHERE company_id=${cid}`);
+      const l  = await client.execute(`SELECT count(*) n FROM journal_entry_lines WHERE company_id=${cid}`);
+      const t  = await client.execute(`SELECT account_type, count(*) n, round(sum(debit),2) d, round(sum(credit),2) c FROM journal_entry_lines WHERE company_id=${cid} GROUP BY account_type ORDER BY n DESC LIMIT 10`);
+      const s  = await client.execute(`SELECT id,account_code,account_name,account_type,debit,credit,date FROM journal_entry_lines WHERE company_id=${cid} LIMIT 3`);
+      const dt = await client.execute(`SELECT min(date) mn, max(date) mx FROM journal_entry_lines WHERE company_id=${cid}`);
+      result = { entries:e.rows[0]?.n, lines:l.rows[0]?.n, types:t.rows, sample:s.rows, dates:dt.rows[0] };
+    }
+
+    if (report === "income") {
+      const rows = await client.execute(`SELECT jl.account_type, round(sum(jl.debit),2) d, round(sum(jl.credit),2) c FROM journal_entry_lines jl LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id WHERE jl.company_id=${cid} AND jl.date>='${dF}' AND jl.date<='${dT}' AND (je.name IS NULL OR je.name!='رصيد افتتاحي') GROUP BY jl.account_type`);
+      let rev=0,cogs=0,exp=0;
+      for (const r of rows.rows) { const d=Number(r.d),c=Number(r.c); if(r.account_type==="revenue")rev+=c-d; else if(r.account_type==="cogs")cogs+=d-c; else if(r.account_type==="expenses")exp+=d-c; }
+      result = { revenue:rev, cogs, grossProfit:rev-cogs, expenses:exp, netProfit:rev-cogs-exp, raw:rows.rows };
+    }
+
+    if (report === "trial") {
+      const op = await client.execute(`SELECT account_code, account_name, account_type, round(sum(debit),2) od, round(sum(credit),2) oc FROM journal_entry_lines WHERE company_id=${cid} AND date<'${dF}' GROUP BY account_code LIMIT 10`);
+      const mv = await client.execute(`SELECT account_code, account_name, account_type, round(sum(debit),2) md, round(sum(credit),2) mc FROM journal_entry_lines WHERE company_id=${cid} AND date>='${dF}' AND date<='${dT}' GROUP BY account_code LIMIT 10`);
+      result = { opening:op.rows, movement:mv.rows };
+    }
+
+    res.json(result);
+  } catch(e:any) { res.json({ error: e.message }); }
+});

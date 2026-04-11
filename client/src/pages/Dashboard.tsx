@@ -1607,6 +1607,444 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const label = NAV.flatMap(s=>s.items).find(i=>i.id===page)?.label||page;
   const rc = roleLabels[user.role]||roleLabels.custom;
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 صفحات التقارير المالية
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── ميزان المراجعة ────────────────────────────────────────────────────────────
+function TrialBalancePage({ companyId }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const { data, isLoading } = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="⚖️ ميزان المراجعة" sub="الأرصدة الافتتاحية والحركة والختامية"/>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <span style={{ color:C.muted }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+        </div>
+      </div>
+      {isLoading ? <div style={{ textAlign:"center", padding:60 }}><Spinner/></div> : !data?.length ? <NoData/> : (
+        <Card>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:750 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  <th style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, fontSize:11, borderBottom:`1px solid ${C.primarySoft}` }}>الكود</th>
+                  <th style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, fontSize:11, borderBottom:`1px solid ${C.primarySoft}` }}>اسم الحساب</th>
+                  <th colSpan={2} style={{ padding:"10px 12px", textAlign:"center", color:C.primary, fontWeight:700, fontSize:11, borderBottom:`1px solid ${C.primarySoft}`, background:"#EEF4FF" }}>الرصيد الافتتاحي</th>
+                  <th colSpan={2} style={{ padding:"10px 12px", textAlign:"center", color:C.teal, fontWeight:700, fontSize:11, borderBottom:`1px solid ${C.primarySoft}`, background:"#F0FDFA" }}>الحركة</th>
+                  <th colSpan={2} style={{ padding:"10px 12px", textAlign:"center", color:C.purple, fontWeight:700, fontSize:11, borderBottom:`1px solid ${C.primarySoft}`, background:"#F5F3FF" }}>الرصيد الختامي</th>
+                </tr>
+                <tr style={{ background:"#F8FAFF" }}>
+                  <th colSpan={2}/>
+                  {["مدين","دائن","مدين","دائن","مدين","دائن"].map((h,i)=>(
+                    <th key={i} style={{ padding:"5px 10px", textAlign:"center", color:C.muted, fontSize:10, fontWeight:600, borderBottom:`1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(data as any[]).map((r:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"8px 12px", color:C.muted, fontFamily:"monospace", fontSize:11 }}>{r.accountCode}</td>
+                    <td style={{ padding:"8px 12px", color:C.text }}>{r.accountName}</td>
+                    {[r.openDebit,r.openCredit,r.mvtDebit,r.mvtCredit,r.closingDebit,r.closingCredit].map((v:number,j:number)=>(
+                      <td key={j} style={{ padding:"8px 10px", textAlign:"center", color:Number(v)>0?C.text:C.muted }}>{Number(v)>0?fmt(Number(v)):"—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+                  <td colSpan={2} style={{ padding:"10px 12px", color:C.primary, fontWeight:800 }}>المجموع</td>
+                  {["openDebit","openCredit","mvtDebit","mvtCredit","closingDebit","closingCredit"].map((f,i)=>(
+                    <td key={i} style={{ padding:"10px", textAlign:"center", color:C.primary, fontWeight:800 }}>
+                      {fmt((data as any[]).reduce((s:number,r:any)=>s+(Number(r[f])||0),0))}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── قائمة الدخل ───────────────────────────────────────────────────────────────
+function IncomePage({ companyId }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const { data, isLoading } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  const rows = data ? [
+    { label:"إجمالي الإيرادات",    value:data.revenue,          type:"total",    color:C.primary },
+    { label:"تكلفة المبيعات",      value:-data.cogs,            type:"item" },
+    { label:"مجمل الربح",          value:data.grossProfit,      type:"subtotal", color:C.teal },
+    { label:"المصروفات التشغيلية", value:-data.expenses,        type:"item" },
+    { label:"الربح التشغيلي",      value:data.operatingProfit,  type:"subtotal", color:C.purple },
+    { label:"إيرادات أخرى",        value:data.otherIncome,      type:"item" },
+    { label:"مصروفات أخرى",        value:-data.otherExpenses,   type:"item" },
+    { label:"صافي الربح",          value:data.netProfit,        type:"net",      color:data.netProfit>=0?C.green:C.red },
+  ] : [];
+  const rev = data?.revenue || 1;
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="📈 قائمة الدخل" sub="نتائج الأعمال للفترة المحددة"/>
+        <div style={{ display:"flex", gap:8 }}>
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <span style={{ color:C.muted }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+        </div>
+      </div>
+      {isLoading ? <div style={{ textAlign:"center", padding:60 }}><Spinner/></div> : !data ? <NoData/> : (
+        <Card>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:C.primaryLight }}>
+                <th style={{ padding:"12px 20px", textAlign:"right", color:C.primary, fontWeight:700 }}>البيان</th>
+                <th style={{ padding:"12px 16px", textAlign:"center", color:C.primary, fontWeight:700 }}>المبلغ</th>
+                <th style={{ padding:"12px 16px", textAlign:"center", color:C.primary, fontWeight:700 }}>% من الإيرادات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r,i)=>{
+                const pct = rev>0 ? Math.abs((r.value/rev)*100).toFixed(1) : "—";
+                if (r.type==="net") return (
+                  <tr key={i} style={{ background:r.value>=0?"linear-gradient(135deg,#ECFDF5,#F0FDFA)":"linear-gradient(135deg,#FEF2F2,#FFF1F2)", borderTop:`2px solid ${r.color}` }}>
+                    <td style={{ padding:"14px 20px", fontWeight:800, color:r.color, fontSize:16 }}>{r.label}</td>
+                    <td style={{ padding:"14px 16px", textAlign:"center", fontWeight:800, color:r.color, fontSize:16 }}>{fmt(Math.abs(r.value))}</td>
+                    <td style={{ padding:"14px 16px", textAlign:"center", fontWeight:700, color:r.color }}>{pct}%</td>
+                  </tr>
+                );
+                if (r.type==="total"||r.type==="subtotal") return (
+                  <tr key={i} style={{ background:r.type==="total"?C.primaryLight:"#F8FAFF", borderTop:`1px solid ${C.border}` }}>
+                    <td style={{ padding:"11px 20px", fontWeight:700, color:r.color||C.primary }}>{r.label}</td>
+                    <td style={{ padding:"11px 16px", textAlign:"center", fontWeight:700, color:r.color||C.primary }}>{fmt(Math.abs(r.value))}</td>
+                    <td style={{ padding:"11px 16px", textAlign:"center", color:C.muted, fontSize:11 }}>{pct}%</td>
+                  </tr>
+                );
+                return (
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"9px 20px 9px 36px", color:C.text }}>{r.label}</td>
+                    <td style={{ padding:"9px 16px", textAlign:"center", color:r.value<0?C.red:C.text }}>
+                      {r.value<0?`(${fmt(Math.abs(r.value))})`:fmt(r.value)}
+                    </td>
+                    <td style={{ padding:"9px 16px", textAlign:"center", color:C.muted, fontSize:11 }}>{pct}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── الميزانية العمومية ────────────────────────────────────────────────────────
+function BalanceSheetPage({ companyId }:any) {
+  const [asOf, setAsOf] = useState(`${new Date().getFullYear()}-12-31`);
+  const { data, isLoading } = trpc.journal.balanceSheet.useQuery({ companyId, asOf }, { enabled:!!companyId });
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  const Section = ({ title, items, total, color }:any) => (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ padding:"10px 16px", background:`${color}20`, borderRadius:"8px 8px 0 0", borderBottom:`2px solid ${color}`, display:"flex", justifyContent:"space-between" }}>
+        <span style={{ fontWeight:800, color, fontSize:14 }}>{title}</span>
+        <span style={{ fontWeight:800, color, fontSize:14 }}>{fmt(total)}</span>
+      </div>
+      {(items||[]).sort((a:any,b:any)=>b.value-a.value).slice(0,10).map((item:any,i:number)=>(
+        <div key={i} style={{ padding:"8px 16px 8px 24px", display:"flex", justifyContent:"space-between", borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+          <span style={{ fontSize:12, color:C.text }}><span style={{ color:C.muted, fontSize:10, marginLeft:8 }}>{item.accountCode}</span>{item.accountName}</span>
+          <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{fmt(item.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="🏦 الميزانية العمومية" sub="المركز المالي"/>
+        <input type="date" value={asOf} onChange={e=>setAsOf(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+      </div>
+      {isLoading ? <div style={{ textAlign:"center", padding:60 }}><Spinner/></div> : !data ? <NoData/> : (
+        <>
+          {/* Balance check */}
+          <div style={{ padding:"10px 16px", marginBottom:14, borderRadius:8, background:Math.abs(data.assets-data.totalLiabilitiesEquity)<1?C.greenLight:C.redLight, border:`1px solid ${Math.abs(data.assets-data.totalLiabilitiesEquity)<1?"#A7F3D0":"#FECACA"}` }}>
+            <span style={{ fontSize:13, fontWeight:700, color:Math.abs(data.assets-data.totalLiabilitiesEquity)<1?C.green:C.red }}>
+              {Math.abs(data.assets-data.totalLiabilitiesEquity)<1 ? "✅ الميزانية متوازنة" : `⚠️ فرق: ${fmt(Math.abs(data.assets-data.totalLiabilitiesEquity))}`}
+              {" | "}الأصول: {fmt(data.assets)} | الخصوم: {fmt(data.totalLiabilitiesEquity)}
+            </span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+            <Card style={{ padding:"16px 0", overflow:"hidden" }}>
+              <Section title="الأصول" items={data.details?.assets} total={data.assets} color={C.primary}/>
+              <div style={{ padding:"12px 16px", background:C.primaryLight, display:"flex", justifyContent:"space-between" }}>
+                <span style={{ fontWeight:800, color:C.primary }}>إجمالي الأصول</span>
+                <span style={{ fontWeight:800, color:C.primary, fontSize:16 }}>{fmt(data.assets)}</span>
+              </div>
+            </Card>
+            <div>
+              <Card style={{ padding:"16px 0", overflow:"hidden", marginBottom:12 }}>
+                <Section title="الالتزامات" items={data.details?.liabilities} total={data.liabilities} color={C.red}/>
+              </Card>
+              <Card style={{ padding:"16px 0", overflow:"hidden" }}>
+                <Section title="حقوق الملكية" items={data.details?.equity} total={data.equity} color={C.green}/>
+                <div style={{ padding:"12px 16px", background:C.greenLight, display:"flex", justifyContent:"space-between" }}>
+                  <span style={{ fontWeight:800, color:C.green }}>إجمالي الالتزامات + حقوق الملكية</span>
+                  <span style={{ fontWeight:800, color:C.green }}>{fmt(data.totalLiabilitiesEquity)}</span>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── دفتر الأستاذ العام ────────────────────────────────────────────────────────
+function GeneralLedgerPage({ companyId }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const [acc, setAcc] = useState("");
+  const { data:accounts } = trpc.journal.getAccounts.useQuery({ companyId }, { enabled:!!companyId });
+  const { data, isLoading } = trpc.journal.generalLedger.useQuery({ companyId, accountCode:acc, dateFrom:dF, dateTo:dT }, { enabled:!!companyId&&!!acc });
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <PageTitle title="📒 دفتر الأستاذ العام" sub="حركات حساب خلال فترة"/>
+      <Card style={{ padding:"14px 16px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div style={{ flex:2, minWidth:200 }}>
+            <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>اختر الحساب</label>
+            <select value={acc} onChange={e=>setAcc(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
+              <option value="">— اختر حساباً —</option>
+              {(accounts||[]).map((a:any)=><option key={a.account_code||a.accountCode} value={a.account_code||a.accountCode}>{a.account_code||a.accountCode} — {a.account_name||a.accountName}</option>)}
+            </select>
+          </div>
+          <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>من</label><input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/></div>
+          <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>إلى</label><input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/></div>
+        </div>
+      </Card>
+      {!acc ? <NoData text="اختر حساباً من القائمة أعلاه"/> : isLoading ? <div style={{ textAlign:"center", padding:40 }}><Spinner/></div> : (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:12 }}>
+            {[{l:"الرصيد الافتتاحي",v:data?.openingBalance||0,c:C.primary},{l:"مجموع مدين",v:(data?.lines||[]).reduce((s:number,l:any)=>s+(l.debit||0),0),c:C.teal},{l:"الرصيد الختامي",v:(data?.lines||[]).length?(data?.lines||[]).at(-1)?.balance||0:data?.openingBalance||0,c:C.purple}].map((s,i)=>(
+              <Card key={i} style={{ padding:"12px 16px" }}><p style={{ color:C.muted, fontSize:10, margin:"0 0 3px" }}>{s.l}</p><p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{fmt(s.v)}</p></Card>
+            ))}
+          </div>
+          <Card>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead><tr style={{ background:C.primaryLight }}>{["التاريخ","المستند","البيان","الشريك","مدين","دائن","الرصيد"].map(h=><th key={h} style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>)}</tr></thead>
+              <tbody>
+                <tr style={{ background:C.primaryLight }}>
+                  <td colSpan={4} style={{ padding:"8px 12px", color:C.primary, fontWeight:600, fontSize:11 }}>رصيد افتتاحي</td>
+                  <td style={{ padding:"8px 12px", color:C.primary, fontWeight:700 }}>{(data?.openingBalance||0)>0?fmt(data?.openingBalance||0):"—"}</td>
+                  <td style={{ padding:"8px 12px", color:C.red, fontWeight:700 }}>{(data?.openingBalance||0)<0?fmt(Math.abs(data?.openingBalance||0)):"—"}</td>
+                  <td style={{ padding:"8px 12px", color:C.primary, fontWeight:700 }}>{fmt(data?.openingBalance||0)}</td>
+                </tr>
+                {(data?.lines||[]).map((l:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"8px 12px", color:C.textSec }}>{l.date}</td>
+                    <td style={{ padding:"8px 12px", color:C.primary, fontFamily:"monospace", fontSize:11 }}>{l.entryName||l.entry_name}</td>
+                    <td style={{ padding:"8px 12px", color:C.text }}>{l.label||"—"}</td>
+                    <td style={{ padding:"8px 12px", color:C.textSec }}>{l.partnerName||l.partner_name||"—"}</td>
+                    <td style={{ padding:"8px 12px", color:C.teal, fontWeight:(l.debit||0)>0?600:400 }}>{(l.debit||0)>0?fmt(l.debit):"—"}</td>
+                    <td style={{ padding:"8px 12px", color:C.red, fontWeight:(l.credit||0)>0?600:400 }}>{(l.credit||0)>0?fmt(l.credit):"—"}</td>
+                    <td style={{ padding:"8px 12px", color:(l.balance||0)>=0?C.primary:C.red, fontWeight:600 }}>{fmt(Math.abs(l.balance||0))} {(l.balance||0)>=0?"م":"د"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── التحليل الشهري ────────────────────────────────────────────────────────────
+function MonthlyPage({ companyId }:any) {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const { data, isLoading } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId });
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  const maxVal = data ? Math.max(...data.map((m:any)=>Math.max(m.revenue||0,m.expenses||0)),1) : 1;
+  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="📅 التحليل الشهري" sub="مقارنة الإيرادات والمصروفات شهرياً"/>
+        <select value={year} onChange={e=>setYear(parseInt(e.target.value))} style={{ padding:"6px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, color:C.text }}>
+          {[2022,2023,2024,2025,2026].map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+      {isLoading ? <div style={{ textAlign:"center", padding:60 }}><Spinner/></div> : !data ? <NoData/> : (
+        <>
+          {/* Bar chart */}
+          <Card style={{ padding:"20px", marginBottom:14 }}>
+            <div style={{ display:"flex", gap:8, alignItems:"flex-end", height:180, paddingBottom:8, borderBottom:`1px solid ${C.border}` }}>
+              {data.map((m:any,i:number)=>(
+                <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
+                  <div style={{ display:"flex", gap:2, alignItems:"flex-end", height:150 }}>
+                    <div style={{ width:10, background:C.primary, borderRadius:"2px 2px 0 0", height:`${Math.max(2,((m.revenue||0)/maxVal)*145)}px`, opacity:0.85, transition:"height 0.3s" }}/>
+                    <div style={{ width:10, background:C.amber, borderRadius:"2px 2px 0 0", height:`${Math.max(2,((m.expenses||0)/maxVal)*145)}px`, opacity:0.85, transition:"height 0.3s" }}/>
+                    <div style={{ width:10, background:(m.profit||0)>=0?C.teal:C.red, borderRadius:"2px 2px 0 0", height:`${Math.max(2,(Math.abs(m.profit||0)/maxVal)*145)}px`, transition:"height 0.3s" }}/>
+                  </div>
+                  <span style={{ fontSize:8, color:C.muted }}>{arM[i].slice(0,3)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:16, marginTop:10, justifyContent:"center" }}>
+              {[{c:C.primary,l:"الإيرادات"},{c:C.amber,l:"المصروفات"},{c:C.teal,l:"الأرباح"}].map(s=>(
+                <div key={s.l} style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <div style={{ width:10, height:10, borderRadius:2, background:s.c }}/><span style={{ fontSize:11, color:C.textSec }}>{s.l}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+          <Card>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead><tr style={{ background:C.primaryLight }}>{["الشهر","الإيرادات","المصروفات","صافي الربح","هامش %"].map(h=><th key={h} style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {data.map((m:any,i:number)=>{
+                  const margin = (m.revenue||0)>0?(((m.profit||0)/(m.revenue||1))*100).toFixed(1):"0";
+                  return (
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                      <td style={{ padding:"9px 12px", fontWeight:600, color:C.text }}>{arM[i]}</td>
+                      <td style={{ padding:"9px 12px", color:C.primary, fontWeight:600 }}>{fmt(m.revenue||0)}</td>
+                      <td style={{ padding:"9px 12px", color:C.amber, fontWeight:600 }}>{fmt(m.expenses||0)}</td>
+                      <td style={{ padding:"9px 12px", color:(m.profit||0)>=0?C.green:C.red, fontWeight:700 }}>{fmt(m.profit||0)}</td>
+                      <td style={{ padding:"9px 12px" }}><Badge label={`${margin}%`} bg={parseFloat(margin)>0?C.greenLight:C.redLight} color={parseFloat(margin)>0?C.green:C.red}/></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── النسب المالية ─────────────────────────────────────────────────────────────
+function RatiosPage({ companyId }:any) {
+  const yr = new Date().getFullYear();
+  const { data:income } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:`${yr}-01-01`, dateTo:`${yr}-12-31` }, { enabled:!!companyId });
+  const { data:balance } = trpc.journal.balanceSheet.useQuery({ companyId, asOf:`${yr}-12-31` }, { enabled:!!companyId });
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  if (!income||!balance) return <div style={{ textAlign:"center", padding:60 }}><Spinner/><p style={{ color:C.muted, marginTop:12 }}>جاري حساب النسب...</p></div>;
+  const rev=income.revenue||1, assets=balance.assets||1, equity=balance.equity||1;
+  const liab=balance.liabilities||0, profit=income.netProfit||0, gross=income.grossProfit||0;
+  const ratios = [
+    { cat:"الربحية 💹", items:[
+      {name:"هامش الربح الإجمالي",   val:`${((gross/rev)*100).toFixed(1)}%`,    good:gross>0},
+      {name:"هامش الربح الصافي",     val:`${((profit/rev)*100).toFixed(1)}%`,   good:profit>0},
+      {name:"العائد على الأصول ROA", val:`${((profit/assets)*100).toFixed(1)}%`,good:profit>0},
+      {name:"العائد على حقوق الملكية ROE",val:`${((profit/equity)*100).toFixed(1)}%`,good:profit>0},
+    ]},
+    { cat:"الرافعة المالية ⚖️", items:[
+      {name:"نسبة الدين إلى الأصول",       val:`${((liab/assets)*100).toFixed(1)}%`, good:liab/assets<0.5},
+      {name:"نسبة الدين إلى حقوق الملكية", val:equity>0?`${(liab/equity).toFixed(2)}x`:"—",good:liab/equity<1},
+    ]},
+    { cat:"النشاط 🔄", items:[
+      {name:"هامش الربح التشغيلي", val:`${((income.operatingProfit/rev)*100).toFixed(1)}%`,good:income.operatingProfit>0},
+      {name:"الإيرادات إلى الأصول", val:`${(rev/assets).toFixed(2)}x`, good:rev/assets>0.5},
+    ]},
+  ];
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <PageTitle title="📉 النسب المالية" sub="تحليل الأداء المالي الشامل"/>
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        {ratios.map((cat,ci)=>(
+          <Card key={ci} style={{ padding:"18px 20px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>{cat.cat}</p>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
+              {cat.items.map((r,ri)=>(
+                <div key={ri} style={{ padding:"14px 16px", borderRadius:10, background:r.good?C.greenLight:C.redLight, border:`1px solid ${r.good?"#A7F3D0":"#FECACA"}` }}>
+                  <p style={{ fontSize:11, color:C.textSec, margin:"0 0 6px" }}>{r.name}</p>
+                  <p style={{ fontSize:22, fontWeight:800, color:r.good?C.green:C.red, margin:"0 0 4px" }}>{r.val}</p>
+                  <Badge label={r.good?"✓ جيد":"⚠ يحتاج مراجعة"} bg={r.good?"#D1FAE5":"#FEE2E2"} color={r.good?C.green:C.red}/>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── كشف حساب شريك ────────────────────────────────────────────────────────────
+function PartnerStatementPage({ companyId }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const [partner, setPartner] = useState("");
+  const { data:partners } = trpc.journal.getPartners.useQuery({ companyId }, { enabled:!!companyId });
+  const { data, isLoading } = trpc.journal.partnerStatement.useQuery({ companyId, partnerName:partner, dateFrom:dF, dateTo:dT }, { enabled:!!companyId&&!!partner });
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <PageTitle title="👤 كشف حساب شريك" sub="حركات عميل أو مورد"/>
+      <Card style={{ padding:"14px 16px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div style={{ flex:2, minWidth:200 }}>
+            <label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>الشريك</label>
+            <select value={partner} onChange={e=>setPartner(e.target.value)} style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
+              <option value="">— اختر شريكاً —</option>
+              {(partners||[]).map((p:any)=><option key={p.partnerName||p.partner_name} value={p.partnerName||p.partner_name}>{p.partnerName||p.partner_name}</option>)}
+            </select>
+          </div>
+          <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>من</label><input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/></div>
+          <div><label style={{ display:"block", fontSize:11, color:C.muted, marginBottom:4, fontWeight:600 }}>إلى</label><input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/></div>
+        </div>
+      </Card>
+      {!partner ? <NoData text="اختر شريكاً من القائمة"/> : isLoading ? <div style={{ textAlign:"center", padding:40 }}><Spinner/></div> : (
+        <>
+          <Card style={{ padding:"14px 18px", marginBottom:12, background:(data?.finalBalance||0)>=0?C.greenLight:C.redLight, border:`1px solid ${(data?.finalBalance||0)>=0?"#A7F3D0":"#FECACA"}` }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <span style={{ fontWeight:700, fontSize:14, color:(data?.finalBalance||0)>=0?C.green:C.red }}>الرصيد النهائي</span>
+              <span style={{ fontWeight:800, fontSize:20, color:(data?.finalBalance||0)>=0?C.green:C.red }}>{fmt(Math.abs(data?.finalBalance||0))} {(data?.finalBalance||0)>=0?"مدين":"دائن"}</span>
+            </div>
+          </Card>
+          <Card>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead><tr style={{ background:C.primaryLight }}>{["التاريخ","المستند","البيان","الحساب","مدين","دائن","الرصيد"].map(h=><th key={h} style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {(data?.lines||[]).map((l:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"8px 12px", color:C.textSec }}>{l.date}</td>
+                    <td style={{ padding:"8px 12px", color:C.primary, fontFamily:"monospace", fontSize:11 }}>{l.entryName||l.entry_name}</td>
+                    <td style={{ padding:"8px 12px", color:C.text }}>{l.label||"—"}</td>
+                    <td style={{ padding:"8px 12px", color:C.textSec, fontSize:11 }}>{l.accountCode||l.account_code} {l.accountName||l.account_name}</td>
+                    <td style={{ padding:"8px 12px", color:C.teal, fontWeight:(l.debit||0)>0?600:400 }}>{(l.debit||0)>0?fmt(l.debit):"—"}</td>
+                    <td style={{ padding:"8px 12px", color:C.red, fontWeight:(l.credit||0)>0?600:400 }}>{(l.credit||0)>0?fmt(l.credit):"—"}</td>
+                    <td style={{ padding:"8px 12px", color:(l.balance||0)>=0?C.primary:C.red, fontWeight:600 }}>{fmt(Math.abs(l.balance||0))} {(l.balance||0)>=0?"م":"د"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
