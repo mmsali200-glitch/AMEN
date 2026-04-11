@@ -1131,6 +1131,13 @@ const journalRouter = router({
     .query(async ({ input }) => {
       const { companyId:cid, dateFrom:dF, dateTo:dT } = input;
 
+      // بناء lookup شامل للحسابات التحليلية من جميع الشركات المرتبطة
+      const allAnalytic = await db.run(sql`SELECT odoo_analytic_id, name, code FROM analytic_accounts`).catch(()=>({rows:[]}));
+      const analyticLookup: Record<number,{name:string,code:string}> = {};
+      for (const r of (allAnalytic as any).rows||[]) {
+        analyticLookup[Number(r.odoo_analytic_id)] = { name:r.name||"", code:r.code||"" };
+      }
+
       // تأكد من وجود الجداول
       await db.run(sql`CREATE TABLE IF NOT EXISTS analytic_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL,
@@ -1174,7 +1181,7 @@ const journalRouter = router({
         const centers: Record<string,any> = {};
         for (const r of (rows as any).rows||[]) {
           const k = String(r.center_name);
-          if (!centers[k]) centers[k] = { name:k, revenue:0, cogs:0, expenses:0, otherIncome:0, lines:0 };
+          if (!centers[k]) centers[k] = { name:analyticLookup[Number(k)]?.name||k, code:analyticLookup[Number(k)]?.code||"", revenue:0, cogs:0, expenses:0, otherIncome:0, lines:0 };
           const d=Number(r.d)||0, c=Number(r.c)||0;
           centers[k].lines += Number(r.n)||0;
           if (r.account_type==="revenue")       centers[k].revenue     += c-d;
@@ -1207,8 +1214,13 @@ const journalRouter = router({
       const centers: Record<string,any> = {};
       for (const r of (rows as any).rows||[]) {
         const k = String(r.odoo_analytic_id);
+        // الاسم: من analytic_accounts أولاً، ثم من السطر مباشرة
+        const realName = analyticLookup[Number(r.odoo_analytic_id)]?.name || String(r.analytic_name||"");
+        const realCode = analyticLookup[Number(r.odoo_analytic_id)]?.code || "";
         if (!centers[k]) centers[k] = {
-          id:r.odoo_analytic_id, name:r.analytic_name,
+          id:r.odoo_analytic_id,
+          name: realName || `مركز #${r.odoo_analytic_id}`,
+          code: realCode,
           revenue:0, cogs:0, expenses:0, otherIncome:0, lines:0
         };
         const d=Number(r.d)||0, c=Number(r.c)||0;
