@@ -566,16 +566,25 @@ const journalRouter = router({
         WHERE jl.company_id=${input.companyId} AND jl.date <= ${input.asOf}
         GROUP BY jl.account_code`);
 
-      let assets=0, liabilities=0, equity=0;
+      let assets=0, liabilities=0, equity=0, netProfit=0;
       const details:Record<string,any[]> = {assets:[],liabilities:[],equity:[]};
 
       for (const r of (res as any).rows||[]) {
         const type = r.account_type || classifyAccount(r.account_code||"", r.account_name||"");
         const d=Number(r.debit)||0, c=Number(r.credit)||0;
         const row = { accountCode:r.account_code, accountName:r.account_name, accountType:type };
-        if (type==="assets")      { const v=d-c; if(v!==0){assets+=v;      details.assets.push({...row,value:v});} }
+        if (type==="assets")           { const v=d-c; if(v!==0){assets+=v; details.assets.push({...row,value:v});} }
         else if (type==="liabilities") { const v=c-d; if(v!==0){liabilities+=v; details.liabilities.push({...row,value:v});} }
-        else if (type==="equity") { const v=c-d; if(v!==0){equity+=v;      details.equity.push({...row,value:v});} }
+        else if (type==="equity")      { const v=c-d; if(v!==0){equity+=v; details.equity.push({...row,value:v});} }
+        // الأرباح المحتجزة تُضاف لحقوق الملكية
+        else if (type==="revenue")     netProfit += c-d;
+        else if (type==="cogs"||type==="expenses"||type==="other_expenses") netProfit -= d-c;
+        else if (type==="other_income") netProfit += c-d;
+      }
+      // إضافة صافي الربح كعنصر في حقوق الملكية
+      if (netProfit !== 0) {
+        equity += netProfit;
+        details.equity.push({ accountCode:"", accountName:"الأرباح المحتجزة", accountType:"equity", value:netProfit });
       }
       return { assets, liabilities, equity, totalLiabilitiesEquity:liabilities+equity, details };
     }),
