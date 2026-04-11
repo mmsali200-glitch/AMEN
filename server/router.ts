@@ -400,6 +400,78 @@ const odooRouter = router({
 
       const results: Record<string,any> = {};
 
+      // ── إنشاء الجداول إذا لم تكن موجودة ──────────────────────────────────
+      await db.run(sql`CREATE TABLE IF NOT EXISTS accounts_coa (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        odoo_account_id INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        account_type TEXT,
+        internal_type TEXT,
+        internal_group TEXT,
+        cfo_type TEXT,
+        currency_id INTEGER,
+        deprecated INTEGER DEFAULT 0,
+        UNIQUE(company_id, odoo_account_id)
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_journals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        odoo_journal_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        code TEXT,
+        type TEXT,
+        currency_id INTEGER,
+        default_account_id INTEGER,
+        UNIQUE(company_id, odoo_journal_id)
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_partners_full (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        odoo_partner_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        ref TEXT, email TEXT, phone TEXT, mobile TEXT, vat TEXT,
+        street TEXT, city TEXT, country TEXT,
+        is_customer INTEGER DEFAULT 0,
+        is_supplier INTEGER DEFAULT 0,
+        customer_rank INTEGER DEFAULT 0,
+        supplier_rank INTEGER DEFAULT 0,
+        total_receivable REAL DEFAULT 0,
+        total_payable REAL DEFAULT 0,
+        UNIQUE(company_id, odoo_partner_id)
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_currencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        odoo_currency_id INTEGER NOT NULL UNIQUE,
+        name TEXT NOT NULL, symbol TEXT, rate REAL DEFAULT 1.0, active INTEGER DEFAULT 1
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_sync_registry (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        model_name TEXT NOT NULL,
+        last_sync_at TEXT, records_count INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending', error TEXT,
+        UNIQUE(company_id, model_name)
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS company_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL, description TEXT,
+        base_currency TEXT DEFAULT 'KWD', created_by INTEGER,
+        odoo_url TEXT, odoo_database TEXT, odoo_username TEXT, odoo_password TEXT,
+        odoo_version TEXT, is_connected INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+      await db.run(sql`CREATE TABLE IF NOT EXISTS company_group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL, company_id INTEGER NOT NULL,
+        odoo_company_id INTEGER, odoo_company_name TEXT,
+        exchange_rate REAL DEFAULT 1.0, is_active INTEGER DEFAULT 1,
+        sync_status TEXT DEFAULT 'pending', last_sync_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+
       // ── 1. دليل الحسابات ─────────────────────────────────────────────────
       if (input.models.includes("coa")) {
         const accounts = await conn.getChartOfAccounts(input.odooCompanyId);
@@ -1083,15 +1155,15 @@ const groupsRouter = router({
       // 2. صلاحيات المستخدم الحالي
       await db.run(sql`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, assigned_by, status) VALUES (${ctx.user.id}, ${newCo.id}, 'cfo_admin', ${ctx.user.id}, 'active')`);
 
-      // 3. نسخ إعدادات Odoo — مع دعم الجداول القديمة والجديدة
-      try {
-        await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)`);
-      } catch {
-        // fallback: إذا لم تكن الأعمدة الجديدة موجودة
-        await db.run(sql`INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, 1)`);
-        // ثم تحديث الأعمدة منفردة
-        try { await db.run(sql`UPDATE odoo_configs SET odoo_company_id=${input.odooId}, odoo_company_name=${input.name} WHERE company_id=${newCo.id}`); } catch {}
-      }
+      // 3. نسخ إعدادات Odoo — مع ضمان وجود الأعمدة
+      // أولاً: تأكد من وجود الأعمدة الجديدة
+      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN odoo_company_id INTEGER\`); } catch {}
+      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN odoo_company_name TEXT\`); } catch {}
+      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0\`); } catch {}
+
+      // ثانياً: INSERT بالقيم
+      await db.run(sql\`DELETE FROM odoo_configs WHERE company_id=${newCo.id}\`);
+      await db.run(sql\`INSERT INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)\`);
 
       // 4. ربط بالمجموعة
       await db.run(sql`INSERT INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, sync_status) VALUES (${input.groupId}, ${newCo.id}, ${input.odooId}, ${input.name}, 'pending')`);
