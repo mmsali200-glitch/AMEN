@@ -1694,38 +1694,287 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
 
 // ── Journal Entries ────────────────────────────────────────────────────────────
 function JournalEntriesPage({ companyId }:any) {
-  const [page, setPage] = useState(1);
-  const { data } = trpc.journal.listEntries.useQuery({ companyId, page, limit:20 }, { enabled:!!companyId });
+  const [page, setPage]         = useState(1);
+  const [search, setSearch]     = useState("");
+  const [filterType, setFilter] = useState("all");
+  const [expandedId, setExpanded] = useState<number|null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+
+  const { data, isLoading } = trpc.journal.listEntries.useQuery(
+    { companyId, page, limit:25 },
+    { enabled:!!companyId }
+  );
+  const { data:sync } = trpc.journal.syncStatus.useQuery({ companyId }, { enabled:!!companyId });
+
+  // filter client-side
+  const entries = (data?.entries || []).filter((e:any) => {
+    const matchSearch = !search || e.name?.includes(search) || e.partnerName?.includes(search) || e.journalName?.includes(search);
+    const matchType   = filterType === "all" || e.journalName === filterType;
+    const matchFrom   = !dateFrom || e.date >= dateFrom;
+    const matchTo     = !dateTo   || e.date <= dateTo;
+    return matchSearch && matchType && matchFrom && matchTo;
+  });
+
+  const journals = [...new Set((data?.entries||[]).map((e:any)=>e.journalName).filter(Boolean))];
+
+  const jColors: Record<string,{bg:string,c:string}> = {
+    "مبيعات":{bg:"#EFF6FF",c:"#2563EB"}, "sale":{bg:"#EFF6FF",c:"#2563EB"},
+    "بنك":{bg:"#ECFDF5",c:"#059669"},    "bank":{bg:"#ECFDF5",c:"#059669"},
+    "نقدية":{bg:"#ECFDF5",c:"#059669"},  "cash":{bg:"#ECFDF5",c:"#059669"},
+    "مشتريات":{bg:"#FFFBEB",c:"#D97706"},"purchase":{bg:"#FFFBEB",c:"#D97706"},
+    "رواتب":{bg:"#F5F3FF",c:"#7C3AED"},  "general":{bg:"#F5F3FF",c:"#7C3AED"},
+  };
+  const getJColor = (j:string) => jColors[j] || {bg:"#F8FAFC",c:"#64748B"};
+
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
-  const jColors: Record<string,{bg:string,c:string}> = { مبيعات:{bg:"#EFF6FF",c:"#2563EB"}, بنك:{bg:"#ECFDF5",c:"#059669"}, مشتريات:{bg:"#FFFBEB",c:"#D97706"}, رواتب:{bg:"#F5F3FF",c:"#7C3AED"} };
+
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      <PageTitle title="📋 القيود المحاسبية" sub={`${data?.total||0} قيد إجمالي`} />
-      {!data?.total ? <NoData/> : (
-        <Card>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:800, color:C.text, margin:0 }}>📋 القيود المحاسبية</h2>
+          <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap" }}>
+            <span style={{ fontSize:12, color:C.muted }}>إجمالي القيود: <strong style={{ color:C.primary }}>{fmt(sync?.totalEntries||0)}</strong></span>
+            <span style={{ fontSize:12, color:C.muted }}>السطور: <strong style={{ color:C.teal }}>{fmt(sync?.totalLines||0)}</strong></span>
+            <span style={{ fontSize:12, color:C.muted }}>الصفحة {data?.page||1} من {data?.pages||1}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <Card style={{ padding:"14px 16px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div style={{ flex:2, minWidth:180 }}>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>بحث (رقم القيد / الشريك / الدفتر)</label>
+            <input value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}} placeholder="ابحث..."
+              style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12, outline:"none" }}/>
+          </div>
+          <div style={{ flex:1, minWidth:120 }}>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>نوع الدفتر</label>
+            <select value={filterType} onChange={e=>{setFilter(e.target.value);setPage(1);}} style={{ width:"100%", padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, color:C.text, fontSize:12 }}>
+              <option value="all">الكل</option>
+              {journals.map(j=><option key={j} value={j}>{j}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>من تاريخ</label>
+            <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          </div>
+          <div>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>إلى تاريخ</label>
+            <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          </div>
+          {(search||filterType!=="all"||dateFrom||dateTo) && (
+            <button onClick={()=>{setSearch("");setFilter("all");setDateFrom("");setDateTo("");setPage(1);}}
+              style={{ padding:"7px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:11, fontWeight:600 }}>
+              ✕ مسح الفلتر
+            </button>
+          )}
+        </div>
+      </Card>
+
+      {/* Stats row */}
+      {entries.length > 0 && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+          {[
+            {l:"عدد القيود المعروضة", v:fmt(entries.length),                                         c:C.primary, bg:C.primaryLight},
+            {l:"إجمالي مدين",         v:fmt(entries.reduce((s:number,e:any)=>s+(e.totalDebit||0),0)),  c:C.teal,    bg:C.tealLight},
+            {l:"إجمالي دائن",         v:fmt(entries.reduce((s:number,e:any)=>s+(e.totalCredit||0),0)), c:C.red,     bg:C.redLight},
+            {l:"عدد الشركاء",         v:fmt(new Set(entries.map((e:any)=>e.partnerName).filter(Boolean)).size), c:C.purple, bg:C.purpleLight},
+          ].map((s,i)=>(
+            <Card key={i} style={{ padding:"10px 14px" }}>
+              <p style={{ color:C.muted, fontSize:10, margin:"0 0 2px" }}>{s.l}</p>
+              <p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Table */}
+      {isLoading ? (
+        <div style={{ textAlign:"center", padding:50 }}><Spinner/><p style={{ color:C.muted, marginTop:12 }}>جاري تحميل القيود...</p></div>
+      ) : !data?.total ? (
+        <NoData text="لا توجد قيود — قم بمزامنة Odoo أولاً"/>
+      ) : (
+        <Card style={{ overflow:"hidden" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead><tr style={{ background:C.primaryLight }}>{["رقم القيد","التاريخ","الدفتر","الشريك","مدين","دائن","الحالة"].map(h=><th key={h} style={{ padding:"11px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>)}</tr></thead>
-            <tbody>{data?.entries?.map((e:any,i:number)=>{
-              const jc = jColors[e.journalName||""]||{bg:"#F8FAFC",c:"#64748B"};
-              return <tr key={e.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
-                <td style={{ padding:"9px 12px", color:C.primary, fontWeight:700, fontFamily:"monospace", fontSize:11 }}>{e.name}</td>
-                <td style={{ padding:"9px 12px", color:C.textSec }}>{e.date}</td>
-                <td style={{ padding:"9px 12px" }}><Badge label={e.journalName||"—"} bg={jc.bg} color={jc.c}/></td>
-                <td style={{ padding:"9px 12px", color:C.text }}>{e.partnerName||"—"}</td>
-                <td style={{ padding:"9px 12px", color:C.teal, fontWeight:600 }}>{fmt(e.totalDebit)}</td>
-                <td style={{ padding:"9px 12px", color:C.red, fontWeight:600 }}>{fmt(e.totalCredit)}</td>
-                <td style={{ padding:"9px 12px" }}><Badge label={e.state} bg={C.greenLight} color={C.green}/></td>
-              </tr>;
-            })}</tbody>
+            <thead>
+              <tr style={{ background:C.primaryLight }}>
+                {["","رقم القيد","التاريخ","الدفتر","الشريك","مدين","دائن","البيان","الحالة"].map((h,i)=>(
+                  <th key={i} style={{ padding:"10px 10px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11, whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e:any, i:number) => {
+                const jc  = getJColor(e.journalName||"");
+                const isOpen = expandedId === e.id;
+                return (
+                  <>
+                    <tr key={e.id}
+                      onClick={()=>setExpanded(isOpen?null:e.id)}
+                      style={{ borderBottom:`1px solid ${C.border}`, background:isOpen?C.primaryLight:i%2===0?"#fff":"#F8FAFF", cursor:"pointer", transition:"background 0.1s" }}
+                      onMouseEnter={el=>{if(!isOpen)(el.currentTarget as any).style.background="#F0F7FF";}}
+                      onMouseLeave={el=>{if(!isOpen)(el.currentTarget as any).style.background=i%2===0?"#fff":"#F8FAFF";}}>
+                      {/* Expand icon */}
+                      <td style={{ padding:"9px 8px", width:24 }}>
+                        <span style={{ fontSize:10, color:C.muted, display:"inline-block", transform:isOpen?"rotate(90deg)":"none", transition:"transform 0.2s" }}>▶</span>
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.primary, fontWeight:700, fontFamily:"monospace", fontSize:11, whiteSpace:"nowrap" }}>
+                        {e.name}
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.textSec, whiteSpace:"nowrap" }}>{e.date}</td>
+                      <td style={{ padding:"9px 10px" }}>
+                        <Badge label={e.journalName||"—"} bg={jc.bg} color={jc.c}/>
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.text, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {e.partnerName||"—"}
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.teal, fontWeight:600, whiteSpace:"nowrap" }}>
+                        {(e.totalDebit||0)>0 ? fmt(e.totalDebit) : "—"}
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.red, fontWeight:600, whiteSpace:"nowrap" }}>
+                        {(e.totalCredit||0)>0 ? fmt(e.totalCredit) : "—"}
+                      </td>
+                      <td style={{ padding:"9px 10px", color:C.textSec, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {e.narration||"—"}
+                      </td>
+                      <td style={{ padding:"9px 10px" }}>
+                        <Badge label="✓ معتمد" bg={C.greenLight} color={C.green}/>
+                      </td>
+                    </tr>
+
+                    {/* Expanded rows — سطور القيد */}
+                    {isOpen && (
+                      <tr key={`exp-${e.id}`}>
+                        <td colSpan={9} style={{ padding:0, background:"#F8FAFF" }}>
+                          <EntryLinesSection entryId={e.id} companyId={companyId} entry={e}/>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
+            </tbody>
           </table>
-          <div style={{ padding:"10px 14px", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", background:"#F8FAFF" }}>
-            <span style={{ fontSize:11, color:C.muted }}>صفحة {data?.page} من {data?.pages}</span>
+
+          {/* Pagination */}
+          <div style={{ padding:"12px 16px", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", background:"#F8FAFF" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:11, color:C.muted }}>
+                صفحة <strong>{data.page}</strong> من <strong>{data.pages}</strong>
+                {" "}({fmt(data.total)} قيد إجمالي)
+              </span>
+            </div>
             <div style={{ display:"flex", gap:4 }}>
-              <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} style={{ padding:"4px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:11 }}>←</button>
-              <button onClick={()=>setPage(p=>Math.min(data?.pages||1,p+1))} disabled={page===data?.pages} style={{ padding:"4px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:"#fff", color:C.textSec, cursor:"pointer", fontSize:11 }}>→</button>
+              <button onClick={()=>setPage(1)} disabled={page===1} style={{ padding:"5px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:page===1?"#F1F5F9":"#fff", color:page===1?C.muted:C.primary, cursor:page===1?"default":"pointer", fontSize:11 }}>⟪</button>
+              <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} style={{ padding:"5px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:page===1?"#F1F5F9":"#fff", color:page===1?C.muted:C.primary, cursor:page===1?"default":"pointer", fontSize:11 }}>←</button>
+              {[...Array(Math.min(5,data.pages))].map((_,i)=>{
+                const p = Math.max(1, Math.min(data.pages-4, page-2)) + i;
+                return (
+                  <button key={p} onClick={()=>setPage(p)}
+                    style={{ padding:"5px 10px", borderRadius:7, border:`1px solid ${p===page?C.primary:C.border}`, background:p===page?C.primary:"#fff", color:p===page?"#fff":C.textSec, cursor:"pointer", fontSize:11, fontWeight:p===page?700:400 }}>
+                    {p}
+                  </button>
+                );
+              })}
+              <button onClick={()=>setPage(p=>Math.min(data.pages,p+1))} disabled={page===data.pages} style={{ padding:"5px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:page===data.pages?"#F1F5F9":"#fff", color:page===data.pages?C.muted:C.primary, cursor:page===data.pages?"default":"pointer", fontSize:11 }}>→</button>
+              <button onClick={()=>setPage(data.pages)} disabled={page===data.pages} style={{ padding:"5px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:page===data.pages?"#F1F5F9":"#fff", color:page===data.pages?C.muted:C.primary, cursor:page===data.pages?"default":"pointer", fontSize:11 }}>⟫</button>
             </div>
           </div>
         </Card>
+      )}
+    </div>
+  );
+}
+
+// ── سطور القيد المفصّلة ───────────────────────────────────────────────────────
+function EntryLinesSection({ entryId, companyId, entry }:any) {
+  const { data:linesData, isLoading } = trpc.journal.getEntryLines.useQuery(
+    { entryId, companyId },
+    { enabled:!!entryId }
+  );
+
+  const typeColors: Record<string,{bg:string,c:string}> = {
+    assets:         {bg:"#EFF6FF",c:"#2563EB"},
+    liabilities:    {bg:"#FEF2F2",c:"#DC2626"},
+    equity:         {bg:"#F5F3FF",c:"#7C3AED"},
+    revenue:        {bg:"#ECFDF5",c:"#059669"},
+    expenses:       {bg:"#FFFBEB",c:"#D97706"},
+    cogs:           {bg:"#FFF7ED",c:"#EA580C"},
+    other_income:   {bg:"#F0FDFA",c:"#0D9488"},
+    other_expenses: {bg:"#FFF1F2",c:"#E11D48"},
+  };
+  const typeLabels: Record<string,string> = {
+    assets:"أصول", liabilities:"التزامات", equity:"حقوق ملكية",
+    revenue:"إيرادات", expenses:"مصروفات", cogs:"تكلفة المبيعات",
+    other_income:"إيرادات أخرى", other_expenses:"مصروفات أخرى",
+  };
+
+  const lines = linesData?.lines || [];
+  const totalD = lines.reduce((s:number,l:any)=>s+(l.debit||0),0);
+  const totalC = lines.reduce((s:number,l:any)=>s+(l.credit||0),0);
+
+  return (
+    <div style={{ padding:"0 12px 12px 12px", borderTop:`2px solid ${C.primarySoft}` }}>
+      {/* Entry header */}
+      <div style={{ display:"flex", gap:12, padding:"10px 4px 8px", borderBottom:`1px solid ${C.border}`, marginBottom:8, flexWrap:"wrap" }}>
+        <span style={{ fontSize:12, color:C.primary, fontWeight:700 }}>🔖 {entry.name}</span>
+        <span style={{ fontSize:12, color:C.textSec }}>📅 {entry.date}</span>
+        {entry.partnerName && <span style={{ fontSize:12, color:C.textSec }}>👤 {entry.partnerName}</span>}
+        {entry.narration && <span style={{ fontSize:12, color:C.muted, fontStyle:"italic" }}>"{entry.narration}"</span>}
+        <span style={{ marginRight:"auto", fontSize:11, color:C.muted }}>{lines.length} سطر</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ textAlign:"center", padding:20 }}><Spinner/></div>
+      ) : lines.length === 0 ? (
+        <div style={{ padding:"12px 8px", color:C.muted, fontSize:12, textAlign:"center" }}>
+          ⚠️ لا توجد سطور لهذا القيد — قد تحتاج إعادة المزامنة
+        </div>
+      ) : (
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+          <thead>
+            <tr style={{ background:"#F0F4FA" }}>
+              {["الحساب","كود الحساب","نوع الحساب","الشريك","البيان","مدين","دائن"].map(h=>(
+                <th key={h} style={{ padding:"7px 10px", textAlign:"right", color:C.textSec, fontWeight:700, borderBottom:`1px solid ${C.border}`, fontSize:10 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l:any, i:number) => {
+              const tc = typeColors[l.accountType] || {bg:"#F8FAFC",c:"#64748B"};
+              return (
+                <tr key={i} style={{ borderBottom:`1px solid #F1F5F9`, background:i%2===0?"#fff":"#FAFCFF" }}>
+                  <td style={{ padding:"7px 10px", color:C.text, fontWeight:500, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.accountName||"—"}</td>
+                  <td style={{ padding:"7px 10px", fontFamily:"monospace", color:C.primary, fontSize:11 }}>{l.accountCode}</td>
+                  <td style={{ padding:"7px 10px" }}>
+                    <Badge label={typeLabels[l.accountType]||l.accountType||"—"} bg={tc.bg} color={tc.c}/>
+                  </td>
+                  <td style={{ padding:"7px 10px", color:C.textSec, maxWidth:120, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.partnerName||"—"}</td>
+                  <td style={{ padding:"7px 10px", color:C.muted, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.label||"—"}</td>
+                  <td style={{ padding:"7px 10px", color:C.teal, fontWeight:(l.debit||0)>0?700:400, textAlign:"left", whiteSpace:"nowrap" }}>
+                    {(l.debit||0)>0 ? fmt(l.debit) : "—"}
+                  </td>
+                  <td style={{ padding:"7px 10px", color:C.red, fontWeight:(l.credit||0)>0?700:400, textAlign:"left", whiteSpace:"nowrap" }}>
+                    {(l.credit||0)>0 ? fmt(l.credit) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+              <td colSpan={5} style={{ padding:"8px 10px", color:C.primary, fontWeight:800, fontSize:12 }}>
+                المجموع {Math.abs(totalD-totalC)<0.01?<span style={{ color:C.green, fontSize:10 }}> ✓ متوازن</span>:<span style={{ color:C.red, fontSize:10 }}> ⚠ غير متوازن ({fmt(Math.abs(totalD-totalC))})</span>}
+              </td>
+              <td style={{ padding:"8px 10px", color:C.teal, fontWeight:800, fontSize:12, textAlign:"left" }}>{fmt(totalD)}</td>
+              <td style={{ padding:"8px 10px", color:C.red,  fontWeight:800, fontSize:12, textAlign:"left" }}>{fmt(totalC)}</td>
+            </tr>
+          </tfoot>
+        </table>
       )}
     </div>
   );

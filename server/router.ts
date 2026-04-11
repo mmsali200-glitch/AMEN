@@ -922,6 +922,20 @@ const journalRouter = router({
       return { openingBalance:opBalance, lines, finalBalance:balance };
     }),
 
+  // سطور قيد واحد
+  getEntryLines: protectedProcedure
+    .input(z.object({ entryId:z.number(), companyId:z.number() }))
+    .query(async ({ input }) => {
+      const res = await db.run(sql`
+        SELECT id, account_code, account_name, account_type,
+               partner_name, label, debit, credit, date
+        FROM journal_entry_lines
+        WHERE journal_entry_id=${input.entryId}
+          AND company_id=${input.companyId}
+        ORDER BY id`);
+      return { lines:(res as any).rows||[] };
+    }),
+
   // الحسابات المتاحة
   getAccounts: protectedProcedure
     .input(z.object({ companyId:z.number() }))
