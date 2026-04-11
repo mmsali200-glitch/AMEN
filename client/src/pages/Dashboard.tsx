@@ -12,13 +12,46 @@ const roleLabels: Record<string,{l:string,bg:string,c:string}> = {
   partner:{l:"شريك",bg:"#FDF2F8",c:"#DB2777"},custom:{l:"مخصص",bg:"#F8FAFC",c:"#64748B"},
 };
 const NAV = [
-  { s:"الرئيسية",        items:[{id:"dashboard",      label:"لوحة التحكم",        icon:"📊"}]},
-  { s:"ربط Odoo",        items:[{id:"odoo-wizard",    label:"إعداد وربط + مزامنة", icon:"🔗"}]},
-  { s:"الدفاتر",         items:[{id:"journal-entries",label:"القيود المحاسبية",   icon:"📋"},{id:"general-ledger",label:"دفتر الأستاذ",icon:"📒"},{id:"partner-statement",label:"كشف حساب شريك",icon:"👤"}]},
-  { s:"القوائم المالية", items:[{id:"trial-balance",  label:"ميزان المراجعة",     icon:"⚖️"},{id:"income",label:"قائمة الدخل",icon:"📈"},{id:"balance-sheet",label:"الميزانية العمومية",icon:"🏦"},{id:"cashflow",label:"التدفقات النقدية",icon:"💵"}]},
-  { s:"التحليل",         items:[{id:"ratios",         label:"النسب المالية",      icon:"📉"},{id:"monthly",label:"التحليل الشهري",icon:"📅"}]},
-  { s:"الذكاء AI",       items:[{id:"advisor",        label:"المستشار AI ✦",      icon:"🤖"},{id:"chatbot",label:"شات بوت مالي",icon:"💬"}]},
-  { s:"الإدارة",         items:[{id:"holding",label:"الشركات القابضة",icon:"🏛️"},{id:"users",label:"المستخدمون",icon:"👥"},{id:"companies",label:"الشركات",icon:"🏢"},{id:"diagnostics",label:"تشخيص البيانات",icon:"🔬"},{id:"audit-log",label:"سجل النشاط",icon:"🔍"}]},
+  { s:"الرئيسية",         items:[
+    {id:"dashboard",       label:"لوحة التحكم",           icon:"📊"},
+  ]},
+  { s:"ربط Odoo",         items:[
+    {id:"odoo-wizard",     label:"إعداد وربط + مزامنة",   icon:"🔗"},
+  ]},
+  { s:"الدفاتر",          items:[
+    {id:"journal-entries", label:"القيود المحاسبية",      icon:"📋"},
+    {id:"general-ledger",  label:"دفتر الأستاذ العام",    icon:"📒"},
+    {id:"partner-statement",label:"كشف حساب شريك",        icon:"👤"},
+  ]},
+  { s:"القوائم المالية",  items:[
+    {id:"trial-balance",   label:"ميزان المراجعة",        icon:"⚖️"},
+    {id:"income",          label:"قائمة الدخل",           icon:"📈"},
+    {id:"balance-sheet",   label:"الميزانية العمومية",    icon:"🏦"},
+    {id:"cashflow",        label:"التدفقات النقدية",      icon:"💧"},
+  ]},
+  { s:"التحليل المالي",   items:[
+    {id:"executive",       label:"لوحة الأداء التنفيذية", icon:"🎯"},
+    {id:"ratios",          label:"النسب المالية",          icon:"📉"},
+    {id:"monthly-detail",  label:"تحليل شهري تفصيلي",    icon:"📅"},
+    {id:"costs",           label:"تحليل التكاليف",        icon:"🔍"},
+    {id:"compare",         label:"مقارنة الفترات",        icon:"🔄"},
+    {id:"analytic",        label:"المراكز التحليلية",     icon:"🎯"},
+  ]},
+  { s:"مقارنة الشركات",  items:[
+    {id:"multi-company",   label:"مقارنة الشركات",        icon:"🏢"},
+    {id:"monthly",         label:"أداء شهري للشركات",     icon:"📅"},
+  ]},
+  { s:"الذكاء AI",        items:[
+    {id:"advisor",         label:"المستشار AI",            icon:"🤖"},
+    {id:"chatbot",         label:"شات بوت مالي",          icon:"💬"},
+  ]},
+  { s:"الإدارة",          items:[
+    {id:"holding",         label:"الشركات القابضة",       icon:"🏛️"},
+    {id:"users",           label:"المستخدمون",             icon:"👥"},
+    {id:"companies",       label:"الشركات",                icon:"🏢"},
+    {id:"diagnostics",     label:"تشخيص البيانات",        icon:"🔬"},
+    {id:"audit-log",       label:"سجل النشاط",             icon:"🔍"},
+  ]},
 ];
 
 // ── Shared Components ──────────────────────────────────────────────────────────
