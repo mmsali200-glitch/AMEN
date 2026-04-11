@@ -384,246 +384,248 @@ const odooRouter = router({
   // مزامنة شاملة لكل الجداول من Odoo
   fullSync: protectedProcedure
     .input(z.object({
-      companyId: z.number(),
+      companyId:     z.number(),
       odooCompanyId: z.number(),
-      dateFrom: z.string(),
-      dateTo: z.string(),
-      models: z.array(z.string()).default(["coa","journals","partners","currencies","entries"]),
+      dateFrom:      z.string(),
+      dateTo:        z.string(),
+      models:        z.array(z.string()).default(["coa","journals","partners","currencies","entries"]),
     }))
     .mutation(async ({ input }) => {
       const cfgRows = await db.run(sql`SELECT * FROM odoo_configs WHERE company_id = ${input.companyId} LIMIT 1`);
       const cfg = (cfgRows as any).rows?.[0];
-      if (!cfg) throw new TRPCError({ code:"NOT_FOUND", message:"لم يتم إعداد Odoo" });
+      if (!cfg) throw new TRPCError({ code:"NOT_FOUND", message:"لم يتم إعداد Odoo — اذهب لصفحة الإعداد وربط الشركة" });
+
+      // ── إنشاء كل الجداول اللازمة ──────────────────────────────────────────
+      const createTables = [
+        `CREATE TABLE IF NOT EXISTS accounts_coa (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER NOT NULL, odoo_account_id INTEGER NOT NULL,
+          code TEXT NOT NULL, name TEXT NOT NULL,
+          account_type TEXT, internal_type TEXT, internal_group TEXT, cfo_type TEXT,
+          currency_id INTEGER, deprecated INTEGER DEFAULT 0,
+          UNIQUE(company_id, odoo_account_id))`,
+        `CREATE TABLE IF NOT EXISTS odoo_journals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER NOT NULL, odoo_journal_id INTEGER NOT NULL,
+          name TEXT NOT NULL, code TEXT, type TEXT,
+          UNIQUE(company_id, odoo_journal_id))`,
+        `CREATE TABLE IF NOT EXISTS odoo_partners_full (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER NOT NULL, odoo_partner_id INTEGER NOT NULL,
+          name TEXT NOT NULL, ref TEXT, email TEXT, phone TEXT,
+          vat TEXT, city TEXT, country TEXT,
+          is_customer INTEGER DEFAULT 0, is_supplier INTEGER DEFAULT 0,
+          customer_rank INTEGER DEFAULT 0, supplier_rank INTEGER DEFAULT 0,
+          UNIQUE(company_id, odoo_partner_id))`,
+        `CREATE TABLE IF NOT EXISTS odoo_sync_registry (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER NOT NULL, model_name TEXT NOT NULL,
+          last_sync_at TEXT, records_count INTEGER DEFAULT 0, status TEXT DEFAULT 'pending',
+          UNIQUE(company_id, model_name))`,
+      ];
+      for (const ddl of createTables) {
+        try { await db.run(sql`${ddl}`); } catch(e:any) { console.log("DDL warn:", e.message?.slice(0,60)); }
+      }
 
       const conn = new OdooConnector(cfg.url, cfg.database, cfg.username, cfg.password);
       await conn.authenticate();
 
-      const results: Record<string,any> = {};
+      const results: Record<string,number> = {};
 
-      // ── إنشاء الجداول إذا لم تكن موجودة ──────────────────────────────────
-      await db.run(sql`CREATE TABLE IF NOT EXISTS accounts_coa (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER NOT NULL,
-        odoo_account_id INTEGER NOT NULL,
-        code TEXT NOT NULL,
-        name TEXT NOT NULL,
-        account_type TEXT,
-        internal_type TEXT,
-        internal_group TEXT,
-        cfo_type TEXT,
-        currency_id INTEGER,
-        deprecated INTEGER DEFAULT 0,
-        UNIQUE(company_id, odoo_account_id)
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_journals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER NOT NULL,
-        odoo_journal_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        code TEXT,
-        type TEXT,
-        currency_id INTEGER,
-        default_account_id INTEGER,
-        UNIQUE(company_id, odoo_journal_id)
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_partners_full (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER NOT NULL,
-        odoo_partner_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        ref TEXT, email TEXT, phone TEXT, mobile TEXT, vat TEXT,
-        street TEXT, city TEXT, country TEXT,
-        is_customer INTEGER DEFAULT 0,
-        is_supplier INTEGER DEFAULT 0,
-        customer_rank INTEGER DEFAULT 0,
-        supplier_rank INTEGER DEFAULT 0,
-        total_receivable REAL DEFAULT 0,
-        total_payable REAL DEFAULT 0,
-        UNIQUE(company_id, odoo_partner_id)
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_currencies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        odoo_currency_id INTEGER NOT NULL UNIQUE,
-        name TEXT NOT NULL, symbol TEXT, rate REAL DEFAULT 1.0, active INTEGER DEFAULT 1
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS odoo_sync_registry (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id INTEGER NOT NULL,
-        model_name TEXT NOT NULL,
-        last_sync_at TEXT, records_count INTEGER DEFAULT 0,
-        status TEXT DEFAULT 'pending', error TEXT,
-        UNIQUE(company_id, model_name)
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS company_groups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL, description TEXT,
-        base_currency TEXT DEFAULT 'KWD', created_by INTEGER,
-        odoo_url TEXT, odoo_database TEXT, odoo_username TEXT, odoo_password TEXT,
-        odoo_version TEXT, is_connected INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`);
-      await db.run(sql`CREATE TABLE IF NOT EXISTS company_group_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_id INTEGER NOT NULL, company_id INTEGER NOT NULL,
-        odoo_company_id INTEGER, odoo_company_name TEXT,
-        exchange_rate REAL DEFAULT 1.0, is_active INTEGER DEFAULT 1,
-        sync_status TEXT DEFAULT 'pending', last_sync_at TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`);
-
-      // ── 1. دليل الحسابات ─────────────────────────────────────────────────
+      // ── 1. دليل الحسابات ──────────────────────────────────────────────────
       if (input.models.includes("coa")) {
         const accounts = await conn.getChartOfAccounts(input.odooCompanyId);
-        let coaCount = 0;
+        let n = 0;
         for (const acc of accounts) {
           const cfoType = odooTypeToCfoType(acc.account_type||"", acc.code||"", acc.name||"");
-          await db.run(sql`INSERT OR REPLACE INTO accounts_coa
-            (company_id, odoo_account_id, code, name, account_type, internal_type, internal_group, cfo_type, deprecated)
-            VALUES (${input.companyId}, ${acc.id}, ${acc.code||""}, ${acc.name||""},
-                    ${acc.account_type||""}, ${acc.internal_type||""}, ${acc.internal_group||""},
-                    ${cfoType}, ${acc.deprecated?1:0})`);
-          coaCount++;
+          try {
+            await db.run(sql`INSERT OR REPLACE INTO accounts_coa
+              (company_id, odoo_account_id, code, name, account_type, cfo_type, deprecated)
+              VALUES (${input.companyId}, ${acc.id}, ${acc.code||""}, ${acc.name||""},
+                      ${acc.account_type||""}, ${cfoType}, ${acc.deprecated?1:0})`);
+            n++;
+          } catch {}
         }
-        results.coa = coaCount;
-        await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry (company_id, model_name, last_sync_at, records_count, status) VALUES (${input.companyId}, 'account.account', ${new Date().toISOString()}, ${coaCount}, 'done')`);
+        results.coa = n;
+        try { await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry (company_id, model_name, last_sync_at, records_count, status) VALUES (${input.companyId}, 'account.account', ${new Date().toISOString()}, ${n}, 'done')`); } catch {}
       }
 
-      // ── 2. الدفاتر المحاسبية ─────────────────────────────────────────────
+      // ── 2. الدفاتر ────────────────────────────────────────────────────────
       if (input.models.includes("journals")) {
         const journals = await conn.getJournals(input.odooCompanyId);
         for (const j of journals) {
-          await db.run(sql`INSERT OR REPLACE INTO odoo_journals
-            (company_id, odoo_journal_id, name, code, type, default_account_id)
-            VALUES (${input.companyId}, ${j.id}, ${j.name||""}, ${j.code||""},
-                    ${j.type||""}, ${Array.isArray(j.default_account_id)?j.default_account_id[0]:null})`);
+          try {
+            await db.run(sql`INSERT OR REPLACE INTO odoo_journals
+              (company_id, odoo_journal_id, name, code, type)
+              VALUES (${input.companyId}, ${j.id}, ${j.name||""}, ${j.code||""}, ${j.type||""})`);
+          } catch {}
         }
         results.journals = journals.length;
-        await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry (company_id, model_name, last_sync_at, records_count, status) VALUES (${input.companyId}, 'account.journal', ${new Date().toISOString()}, ${journals.length}, 'done')`);
       }
 
-      // ── 3. الشركاء ───────────────────────────────────────────────────────
+      // ── 3. الشركاء ────────────────────────────────────────────────────────
       if (input.models.includes("partners")) {
         const partners = await conn.getPartners();
+        let n = 0;
         for (const p of partners) {
-          const country = Array.isArray(p.country_id) ? p.country_id[1]||"" : "";
-          await db.run(sql`INSERT OR REPLACE INTO odoo_partners_full
-            (company_id, odoo_partner_id, name, ref, email, phone, mobile, vat, street, city, country, is_customer, is_supplier, customer_rank, supplier_rank)
-            VALUES (${input.companyId}, ${p.id}, ${p.name||""}, ${p.ref||""}, ${p.email||""},
-                    ${p.phone||""}, ${p.mobile||""}, ${p.vat||""}, ${p.street||""}, ${p.city||""},
-                    ${country}, ${(p.customer_rank||0)>0?1:0}, ${(p.supplier_rank||0)>0?1:0},
-                    ${p.customer_rank||0}, ${p.supplier_rank||0})`);
+          try {
+            const country = Array.isArray(p.country_id) ? p.country_id[1]||"" : "";
+            await db.run(sql`INSERT OR REPLACE INTO odoo_partners_full
+              (company_id, odoo_partner_id, name, ref, email, phone, vat, city, country, is_customer, is_supplier, customer_rank, supplier_rank)
+              VALUES (${input.companyId}, ${p.id}, ${p.name||""}, ${p.ref||""},
+                      ${p.email||""}, ${p.phone||""}, ${p.vat||""}, ${p.city||""}, ${country},
+                      ${(p.customer_rank||0)>0?1:0}, ${(p.supplier_rank||0)>0?1:0},
+                      ${p.customer_rank||0}, ${p.supplier_rank||0})`);
+            n++;
+          } catch {}
         }
-        results.partners = partners.length;
-        await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry (company_id, model_name, last_sync_at, records_count, status) VALUES (${input.companyId}, 'res.partner', ${new Date().toISOString()}, ${partners.length}, 'done')`);
+        results.partners = n;
       }
 
-      // ── 4. العملات ───────────────────────────────────────────────────────
-      if (input.models.includes("currencies")) {
-        const currencies = await conn.getCurrencies();
-        for (const c of currencies) {
-          await db.run(sql`INSERT OR REPLACE INTO odoo_currencies (odoo_currency_id, name, symbol, rate, active) VALUES (${c.id}, ${c.name||""}, ${c.symbol||""}, ${c.rate||1}, ${c.active?1:0})`);
-        }
-        results.currencies = currencies.length;
-      }
-
-      // ── 5. القيود المحاسبية وسطورها (مع استخدام دليل الحسابات للتصنيف) ──
+      // ── 4. القيود المحاسبية ───────────────────────────────────────────────
       if (input.models.includes("entries")) {
-        // مسح القديم إذا طُلب
+
+        // تحميل دليل الحسابات في memory
+        const coaMap: Record<number,{code:string,name:string,cfoType:string}> = {};
+        try {
+          const coaRows = await db.run(sql`SELECT odoo_account_id, code, name, cfo_type FROM accounts_coa WHERE company_id=${input.companyId}`);
+          for (const r of (coaRows as any).rows||[]) {
+            coaMap[Number(r.odoo_account_id)] = { code:r.code||"0000", name:r.name||"", cfoType:r.cfo_type||"other" };
+          }
+        } catch {}
+
+        // مسح القديم
         await db.run(sql`DELETE FROM journal_entry_lines WHERE company_id = ${input.companyId}`);
         await db.run(sql`DELETE FROM journal_entries WHERE company_id = ${input.companyId}`);
 
-        // تحميل دليل الحسابات في memory للتصنيف السريع
-        const coaMap: Record<number, {code:string,name:string,cfoType:string}> = {};
-        const coaRows = await db.run(sql`SELECT odoo_account_id, code, name, cfo_type FROM accounts_coa WHERE company_id=${input.companyId}`);
-        for (const r of (coaRows as any).rows||[]) {
-          coaMap[r.odoo_account_id] = { code:r.code, name:r.name, cfoType:r.cfo_type };
-        }
-
-        // الرصيد الافتتاحي
+        // ── الرصيد الافتتاحي ───────────────────────────────────────────────
         let openingLines = 0;
-        if (input.dateFrom) {
+        try {
           const oLines = await conn.getOpeningBalanceLines(input.odooCompanyId, input.dateFrom);
           openingLines = oLines.length;
+
           if (oLines.length > 0) {
-            const res2 = await db.run(sql`INSERT INTO journal_entries (company_id, name, journal_name, date, state, total_debit, total_credit) VALUES (${input.companyId}, 'رصيد افتتاحي', 'افتتاحي', ${input.dateFrom}, 'posted', 0, 0) RETURNING id`);
-            const openEntryId = (res2 as any).rows?.[0]?.id || (res2 as any).lastInsertRowid;
-            const accSums: Record<string,{code:string,name:string,type:string,debit:number,credit:number}> = {};
-            for (const l of oLines) {
-              const accId = Array.isArray(l.account_id) ? l.account_id[0] : l.account_id;
-              const accInfo = coaMap[accId] || { code:"0000", name:"", cfoType:"other" };
-              const key = accInfo.code;
-              if (!accSums[key]) accSums[key] = { code:accInfo.code, name:accInfo.name, type:accInfo.cfoType, debit:0, credit:0 };
-              accSums[key].debit  += Number(l.debit)  || 0;
-              accSums[key].credit += Number(l.credit) || 0;
-            }
-            const openDate = new Date(input.dateFrom); openDate.setDate(openDate.getDate()-1);
-            const openDateStr = openDate.toISOString().split("T")[0];
-            for (const acc of Object.values(accSums)) {
-              const nd = Math.max(0, acc.debit-acc.credit), nc = Math.max(0, acc.credit-acc.debit);
-              if (nd===0&&nc===0) continue;
-              await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines (journal_entry_id, company_id, account_code, account_name, account_type, label, debit, credit, date) VALUES (${openEntryId}, ${input.companyId}, ${acc.code}, ${acc.name}, ${acc.type}, 'رصيد افتتاحي', ${nd}, ${nc}, ${openDateStr})`);
+            // إدراج قيد الرصيد الافتتاحي
+            await db.run(sql`INSERT INTO journal_entries
+              (company_id, name, journal_name, date, state, total_debit, total_credit)
+              VALUES (${input.companyId}, 'رصيد افتتاحي', 'افتتاحي', ${input.dateFrom}, 'posted', 0, 0)`);
+            const openRes = await db.run(sql`SELECT id FROM journal_entries WHERE company_id=${input.companyId} AND name='رصيد افتتاحي' ORDER BY id DESC LIMIT 1`);
+            const openEntryId = (openRes as any).rows?.[0]?.id;
+
+            if (openEntryId) {
+              // تجميع الرصيد الافتتاحي حساباً حساباً
+              const accSums: Record<string,{code:string,name:string,type:string,d:number,c:number}> = {};
+              for (const l of oLines) {
+                const accId = Array.isArray(l.account_id) ? Number(l.account_id[0]) : Number(l.account_id);
+                const info  = coaMap[accId] || (() => {
+                  const raw  = Array.isArray(l.account_id) ? String(l.account_id[1]||"") : "";
+                  const code = raw.split(" ")[0] || "0000";
+                  const name = raw.replace(/^\S+\s+/,"") || "";
+                  return { code, name, cfoType: odooTypeToCfoType("", code, name) };
+                })();
+                if (!accSums[info.code]) accSums[info.code] = { code:info.code, name:info.name, type:info.cfoType, d:0, c:0 };
+                accSums[info.code].d += Number(l.debit)||0;
+                accSums[info.code].c += Number(l.credit)||0;
+              }
+
+              // تاريخ يوم قبل بداية الفترة
+              const openDate = new Date(input.dateFrom);
+              openDate.setDate(openDate.getDate()-1);
+              const openDateStr = openDate.toISOString().split("T")[0];
+
+              for (const acc of Object.values(accSums)) {
+                const nd = Math.max(0, acc.d - acc.c);
+                const nc = Math.max(0, acc.c - acc.d);
+                if (nd === 0 && nc === 0) continue;
+                try {
+                  await db.run(sql`INSERT INTO journal_entry_lines
+                    (journal_entry_id, company_id, account_code, account_name, account_type, label, debit, credit, date)
+                    VALUES (${openEntryId}, ${input.companyId}, ${acc.code}, ${acc.name}, ${acc.type},
+                            'رصيد افتتاحي', ${nd}, ${nc}, ${openDateStr})`);
+                } catch {}
+              }
             }
           }
-        }
+        } catch(e:any) { console.log("Opening balance warn:", e.message?.slice(0,80)); }
 
-        // القيود الرئيسية
+        // ── استيراد القيود والسطور ─────────────────────────────────────────
         const total = await conn.countEntries(input.odooCompanyId, input.dateFrom, input.dateTo);
         let inserted = 0;
-        const batch = 200;
-        for (let offset = 0; offset < total; offset += batch) {
-          const moves = await conn.getJournalEntries(input.odooCompanyId, input.dateFrom, input.dateTo, batch, offset);
+        const batchSize = 100;
+
+        for (let offset = 0; offset < total; offset += batchSize) {
+          const moves = await conn.getJournalEntries(input.odooCompanyId, input.dateFrom, input.dateTo, batchSize, offset);
           if (!moves.length) break;
 
           // إدراج القيود
-          const moveToEntry: Record<number,number> = {};
+          const moveToEntryId: Record<number,number> = {};
           for (const move of moves) {
-            const jName = Array.isArray(move.journal_id) ? move.journal_id[1]||"" : "";
-            const pName = Array.isArray(move.partner_id) ? move.partner_id[1]||"" : "";
-            const res3 = await db.run(sql`INSERT OR REPLACE INTO journal_entries
-              (company_id, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name, narration)
-              VALUES (${input.companyId}, ${move.id}, ${move.name||""}, ${move.ref||""},
-                      ${jName}, ${move.date||""}, 'posted',
-                      ${Number(move.amount_total)||0}, ${Number(move.amount_total)||0},
-                      ${pName}, ${move.narration||""}) RETURNING id`);
-            const entryId = (res3 as any).rows?.[0]?.id || (res3 as any).lastInsertRowid;
-            if (entryId) moveToEntry[move.id] = entryId;
+            const jName = Array.isArray(move.journal_id) ? String(move.journal_id[1]||"") : "";
+            const pName = Array.isArray(move.partner_id) ? String(move.partner_id[1]||"") : "";
+            const mDate = String(move.date||input.dateFrom);
+            try {
+              await db.run(sql`INSERT OR REPLACE INTO journal_entries
+                (company_id, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name, narration)
+                VALUES (${input.companyId}, ${move.id}, ${move.name||""}, ${move.ref||""},
+                        ${jName}, ${mDate}, 'posted',
+                        ${Number(move.amount_total)||0}, ${Number(move.amount_total)||0},
+                        ${pName}, ${move.narration||""})`);
+
+              const eRes = await db.run(sql`SELECT id FROM journal_entries WHERE company_id=${input.companyId} AND odoo_move_id=${move.id} LIMIT 1`);
+              const eId  = (eRes as any).rows?.[0]?.id;
+              if (eId) moveToEntryId[move.id] = Number(eId);
+            } catch {}
           }
 
           // إدراج السطور
-          const lines = await conn.getJournalLines(moves.map((m:any)=>m.id));
+          const moveIds = moves.map((m:any) => m.id as number);
+          let lines: any[] = [];
+          try { lines = await conn.getJournalLines(moveIds); } catch {}
+
           for (const line of lines) {
-            const moveId = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
-            const entryId = moveToEntry[moveId];
+            const moveId = Array.isArray(line.move_id) ? Number(line.move_id[0]) : Number(line.move_id);
+            const entryId = moveToEntryId[moveId];
             if (!entryId) continue;
 
-            const accId = Array.isArray(line.account_id) ? line.account_id[0] : 0;
-            const accInfo = coaMap[accId] || (() => {
-              const code = Array.isArray(line.account_id) ? (line.account_id[1]||"").split(" ")[0] : "0000";
-              const name = Array.isArray(line.account_id) ? (line.account_id[1]||"").replace(/^\S+\s+/,"") : "";
+            const accId  = Array.isArray(line.account_id) ? Number(line.account_id[0]) : 0;
+            const info   = coaMap[accId] || (() => {
+              const raw  = Array.isArray(line.account_id) ? String(line.account_id[1]||"") : "";
+              const code = raw.split(" ")[0] || "0000";
+              const name = raw.replace(/^\S+\s+/,"") || "";
               return { code, name, cfoType: odooTypeToCfoType("", code, name) };
             })();
 
-            const pName = Array.isArray(line.partner_id) ? line.partner_id[1]||"" : "";
-            const lineDate = line.date || moves.find((m:any)=>m.id===moveId)?.date || input.dateFrom;
+            const pName   = Array.isArray(line.partner_id) ? String(line.partner_id[1]||"") : "";
+            const lineDate = String(line.date || moves.find((m:any)=>m.id===moveId)?.date || input.dateFrom);
 
-            await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines
-              (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date)
-              VALUES (${entryId}, ${input.companyId}, ${accInfo.code}, ${accInfo.name}, ${accInfo.cfoType},
-                      ${pName}, ${line.name||""}, ${Number(line.debit)||0}, ${Number(line.credit)||0}, ${lineDate})`);
+            try {
+              await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines
+                (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date)
+                VALUES (${entryId}, ${input.companyId}, ${info.code}, ${info.name}, ${info.cfoType},
+                        ${pName}, ${line.name||""}, ${Number(line.debit)||0}, ${Number(line.credit)||0}, ${lineDate})`);
+            } catch {}
           }
           inserted += moves.length;
         }
 
-        results.entries   = inserted;
+        results.entries      = inserted;
         results.openingLines = openingLines;
-        results.total     = total;
-        await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry (company_id, model_name, last_sync_at, records_count, status) VALUES (${input.companyId}, 'account.move', ${new Date().toISOString()}, ${inserted}, 'done')`);
-        await db.run(sql`INSERT INTO sync_logs (company_id, sync_type, status, entries, finished_at) VALUES (${input.companyId}, 'full', 'success', ${inserted}, ${new Date().toISOString()})`);
+        results.total        = total;
+
+        // سجل المزامنة
+        try {
+          await db.run(sql`INSERT OR REPLACE INTO odoo_sync_registry
+            (company_id, model_name, last_sync_at, records_count, status)
+            VALUES (${input.companyId}, 'account.move', ${new Date().toISOString()}, ${inserted}, 'done')`);
+          await db.run(sql`INSERT INTO sync_logs
+            (company_id, sync_type, status, entries, finished_at)
+            VALUES (${input.companyId}, 'full', 'success', ${inserted}, ${new Date().toISOString()})`);
+        } catch {}
       }
 
       return { success:true, ...results };
     }),
+
 
   // سجل المزامنة لكل النماذج
   getSyncRegistry: protectedProcedure
@@ -666,207 +668,195 @@ const odooRouter = router({
 // ── Journal ────────────────────────────────────────────────────────────────────
 const journalRouter = router({
 
+  // قائمة القيود مع pagination
   listEntries: protectedProcedure
     .input(z.object({ companyId:z.number(), page:z.number().default(1), limit:z.number().default(20) }))
     .query(async ({ input }) => {
-      const offset = (input.page-1) * input.limit;
-      const entries = await db.select().from(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.companyId)).orderBy(desc(schema.journalEntries.date)).limit(input.limit).offset(offset);
-      const [{ count }] = await db.select({ count:sql<number>`count(*)` }).from(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.companyId));
-      return { entries, total:count, page:input.page, pages:Math.ceil(count/input.limit) };
+      const offset = (input.page-1)*input.limit;
+      const rows = await db.run(sql`
+        SELECT * FROM journal_entries
+        WHERE company_id=${input.companyId}
+        ORDER BY date DESC, id DESC
+        LIMIT ${input.limit} OFFSET ${offset}`);
+      const cnt = await db.run(sql`SELECT count(*) as n FROM journal_entries WHERE company_id=${input.companyId}`);
+      const total = Number((cnt as any).rows?.[0]?.n)||0;
+      return { entries:(rows as any).rows||[], total, page:input.page, pages:Math.ceil(total/input.limit) };
     }),
 
+  // حالة المزامنة
   syncStatus: protectedProcedure
     .input(z.object({ companyId:z.number() }))
     .query(async ({ input }) => {
-      const logRows = await db.run(sql`SELECT * FROM sync_logs WHERE company_id = ${input.companyId} ORDER BY started_at DESC LIMIT 1`);
-      const lastSync = (logRows as any).rows?.[0] || null;
-      const [{ total }] = await db.select({ total:sql<number>`count(*)` }).from(schema.journalEntries).where(eq(schema.journalEntries.companyId, input.companyId));
-      const [{ lines }] = await db.select({ lines:sql<number>`count(*)` }).from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.companyId));
-      return { lastSync, totalEntries:total, totalLines:lines };
+      const logRes = await db.run(sql`SELECT * FROM sync_logs WHERE company_id=${input.companyId} ORDER BY started_at DESC LIMIT 1`);
+      const lastSync = (logRes as any).rows?.[0]||null;
+      const eCnt = await db.run(sql`SELECT count(*) as n FROM journal_entries WHERE company_id=${input.companyId}`);
+      const lCnt = await db.run(sql`SELECT count(*) as n FROM journal_entry_lines WHERE company_id=${input.companyId}`);
+      return { lastSync, totalEntries:Number((eCnt as any).rows?.[0]?.n)||0, totalLines:Number((lCnt as any).rows?.[0]?.n)||0 };
     }),
 
-  // ميزان المراجعة — raw SQL للموثوقية الكاملة
+  // ميزان المراجعة 6 أعمدة
   trialBalance: protectedProcedure
     .input(z.object({ companyId:z.number(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
-      const cid = input.companyId;
-      const dF  = input.dateFrom;
-      const dT  = input.dateTo;
+      const cid = input.companyId, dF = input.dateFrom, dT = input.dateTo;
 
-      const openRows = await db.run(sql`
-        SELECT jl.account_code, jl.account_name, jl.account_type,
-               SUM(jl.debit) as open_debit, SUM(jl.credit) as open_credit
-        FROM journal_entry_lines jl
-        WHERE jl.company_id = ${cid}
-          AND (jl.date < ${dF} OR jl.date IS NULL OR jl.date = '')
-        GROUP BY jl.account_code`);
+      // الرصيد الافتتاحي = كل السطور قبل بداية الفترة
+      const openRes = await db.run(sql`
+        SELECT account_code, account_name, account_type,
+               SUM(debit) as od, SUM(credit) as oc
+        FROM journal_entry_lines
+        WHERE company_id=${cid} AND date < ${dF}
+        GROUP BY account_code`);
 
-      const mvtRows = await db.run(sql`
+      // حركة الفترة (باستثناء قيد رصيد افتتاحي)
+      const mvtRes = await db.run(sql`
         SELECT jl.account_code, jl.account_name, jl.account_type,
-               SUM(jl.debit) as mvt_debit, SUM(jl.credit) as mvt_credit
+               SUM(jl.debit) as md, SUM(jl.credit) as mc
         FROM journal_entry_lines jl
         LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
-        WHERE jl.company_id = ${cid}
+        WHERE jl.company_id=${cid}
           AND jl.date >= ${dF} AND jl.date <= ${dT}
           AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
         GROUP BY jl.account_code`);
 
       const map: Record<string,any> = {};
-
-      for (const o of (openRows as any).rows||[]) {
-        const code = o.account_code||"";
+      for (const r of (openRes as any).rows||[]) {
+        const code = String(r.account_code||"");
         map[code] = {
-          accountCode: code,
-          accountName: o.account_name||"",
-          accountType: o.account_type||classifyAccount(code,o.account_name||""),
-          openDebit:  Number(o.open_debit)||0,
-          openCredit: Number(o.open_credit)||0,
-          mvtDebit: 0, mvtCredit: 0,
+          accountCode:code, accountName:r.account_name||"",
+          accountType:r.account_type||classifyAccount(code,r.account_name||""),
+          openDebit:Number(r.od)||0, openCredit:Number(r.oc)||0, mvtDebit:0, mvtCredit:0
         };
       }
-      for (const m of (mvtRows as any).rows||[]) {
-        const code = m.account_code||"";
+      for (const r of (mvtRes as any).rows||[]) {
+        const code = String(r.account_code||"");
         if (!map[code]) map[code] = {
-          accountCode:code, accountName:m.account_name||"",
-          accountType:m.account_type||classifyAccount(code,m.account_name||""),
+          accountCode:code, accountName:r.account_name||"",
+          accountType:r.account_type||classifyAccount(code,r.account_name||""),
           openDebit:0, openCredit:0
         };
-        map[code].mvtDebit  = Number(m.mvt_debit)||0;
-        map[code].mvtCredit = Number(m.mvt_credit)||0;
+        map[code].mvtDebit  = Number(r.md)||0;
+        map[code].mvtCredit = Number(r.mc)||0;
       }
 
       return Object.values(map)
         .filter((r:any)=>r.openDebit||r.openCredit||r.mvtDebit||r.mvtCredit)
         .map((r:any)=>{
-          const netOpen=r.openDebit-r.openCredit, netMvt=r.mvtDebit-r.mvtCredit, netClose=netOpen+netMvt;
-          return {...r, openingBalance:netOpen, closingBalance:netClose, closingDebit:netClose>0?netClose:0, closingCredit:netClose<0?Math.abs(netClose):0};
-        }).sort((a:any,b:any)=>a.accountCode.localeCompare(b.accountCode));
+          const netO = r.openDebit-r.openCredit, netM = r.mvtDebit-r.mvtCredit, netC = netO+netM;
+          return {...r, openingBalance:netO, closingBalance:netC,
+                  closingDebit:netC>0?netC:0, closingCredit:netC<0?Math.abs(netC):0};
+        }).sort((a:any,b:any)=>String(a.accountCode).localeCompare(String(b.accountCode)));
     }),
 
-  // قائمة الدخل — raw SQL
+  // قائمة الدخل
   incomeStatement: protectedProcedure
     .input(z.object({ companyId:z.number(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
-      const rawRows = await db.run(sql`
+      const res = await db.run(sql`
         SELECT jl.account_type, jl.account_code, jl.account_name,
                SUM(jl.debit) as debit, SUM(jl.credit) as credit
         FROM journal_entry_lines jl
         LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
-        WHERE jl.company_id = ${input.companyId}
-          AND jl.date >= ${input.dateFrom}
-          AND jl.date <= ${input.dateTo}
+        WHERE jl.company_id=${input.companyId}
+          AND jl.date >= ${input.dateFrom} AND jl.date <= ${input.dateTo}
           AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
         GROUP BY jl.account_code`);
-      const rows = ((rawRows as any).rows||[]).map((r:any)=>({
-        accountType:r.account_type, accountCode:r.account_code, accountName:r.account_name,
-        debit:Number(r.debit)||0, credit:Number(r.credit)||0
-      }));
 
       let revenue=0,cogs=0,expenses=0,otherIncome=0,otherExpenses=0;
-      const details: Record<string,any[]> = { revenue:[],cogs:[],expenses:[],other_income:[],other_expenses:[] };
-      for (const r of rows) {
-        const type = r.accountType || classifyAccount(r.accountCode, r.accountName);
-        const net = (r.credit||0)-(r.debit||0);
-        if (type==="revenue")        { revenue+=net; details.revenue.push({...r,net}); }
-        else if (type==="cogs")      { cogs+=Math.abs(net); details.cogs.push({...r,net:Math.abs(net)}); }
-        else if (type==="expenses")  { expenses+=Math.abs(net); details.expenses.push({...r,net:Math.abs(net)}); }
-        else if (type==="other_income")   { otherIncome+=net; details.other_income.push({...r,net}); }
-        else if (type==="other_expenses") { otherExpenses+=Math.abs(net); details.other_expenses.push({...r,net:Math.abs(net)}); }
+      const details:Record<string,any[]> = {revenue:[],cogs:[],expenses:[],other_income:[],other_expenses:[]};
+
+      for (const r of (res as any).rows||[]) {
+        const type = r.account_type || classifyAccount(r.account_code||"", r.account_name||"");
+        const d=Number(r.debit)||0, c=Number(r.credit)||0;
+        const row = { accountCode:r.account_code, accountName:r.account_name, accountType:type, debit:d, credit:c };
+        if (type==="revenue")         { revenue       += c-d; details.revenue.push({...row,net:c-d}); }
+        else if (type==="cogs")       { cogs          += d-c; details.cogs.push({...row,net:d-c}); }
+        else if (type==="expenses")   { expenses      += d-c; details.expenses.push({...row,net:d-c}); }
+        else if (type==="other_income")    { otherIncome    += c-d; details.other_income.push({...row,net:c-d}); }
+        else if (type==="other_expenses")  { otherExpenses  += d-c; details.other_expenses.push({...row,net:d-c}); }
       }
-      const grossProfit    = revenue-cogs;
-      const operatingProfit= grossProfit-expenses;
-      const netProfit      = operatingProfit+otherIncome-otherExpenses;
+      const grossProfit=revenue-cogs, operatingProfit=grossProfit-expenses, netProfit=operatingProfit+otherIncome-otherExpenses;
       return { revenue,cogs,grossProfit,expenses,operatingProfit,otherIncome,otherExpenses,netProfit,details };
     }),
 
-  // الميزانية العمومية — raw SQL
+  // الميزانية العمومية
   balanceSheet: protectedProcedure
     .input(z.object({ companyId:z.number(), asOf:z.string() }))
     .query(async ({ input }) => {
-      const rawRows = await db.run(sql`
+      const res = await db.run(sql`
         SELECT jl.account_type, jl.account_code, jl.account_name,
                SUM(jl.debit) as debit, SUM(jl.credit) as credit
         FROM journal_entry_lines jl
-        WHERE jl.company_id = ${input.companyId}
-          AND (jl.date <= ${input.asOf} OR jl.date IS NULL OR jl.date = '')
+        WHERE jl.company_id=${input.companyId} AND jl.date <= ${input.asOf}
         GROUP BY jl.account_code`);
-      const rows = ((rawRows as any).rows||[]).map((r:any)=>({
-        accountType:r.account_type, accountCode:r.account_code, accountName:r.account_name,
-        debit:Number(r.debit)||0, credit:Number(r.credit)||0
-      }));
 
-      let assets=0,liabilities=0,equity=0;
-      const details: Record<string,any[]> = { assets:[],liabilities:[],equity:[] };
-      for (const r of rows) {
-        const type = r.accountType || classifyAccount(r.accountCode, r.accountName);
-        const d=r.debit||0, c=r.credit||0;
-        if (type==="assets")      { const v=d-c; if(v!==0){assets+=v;      details.assets.push({...r,value:v});} }
-        else if (type==="liabilities") { const v=c-d; if(v!==0){liabilities+=v; details.liabilities.push({...r,value:v});} }
-        else if (type==="equity") { const v=c-d; if(v!==0){equity+=v;      details.equity.push({...r,value:v});} }
+      let assets=0, liabilities=0, equity=0;
+      const details:Record<string,any[]> = {assets:[],liabilities:[],equity:[]};
+
+      for (const r of (res as any).rows||[]) {
+        const type = r.account_type || classifyAccount(r.account_code||"", r.account_name||"");
+        const d=Number(r.debit)||0, c=Number(r.credit)||0;
+        const row = { accountCode:r.account_code, accountName:r.account_name, accountType:type };
+        if (type==="assets")      { const v=d-c; if(v!==0){assets+=v;      details.assets.push({...row,value:v});} }
+        else if (type==="liabilities") { const v=c-d; if(v!==0){liabilities+=v; details.liabilities.push({...row,value:v});} }
+        else if (type==="equity") { const v=c-d; if(v!==0){equity+=v;      details.equity.push({...row,value:v});} }
       }
-      return { assets,liabilities,equity,totalLiabilitiesEquity:liabilities+equity,details };
+      return { assets, liabilities, equity, totalLiabilitiesEquity:liabilities+equity, details };
     }),
 
-  // دفتر الأستاذ
+  // دفتر الأستاذ العام
   generalLedger: protectedProcedure
     .input(z.object({ companyId:z.number(), accountCode:z.string(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
-      const [openRow] = await db.select({ d:sql<number>`sum(debit)`, c:sql<number>`sum(credit)` })
-        .from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          eq(schema.journalEntryLines.accountCode, input.accountCode),
-          sql`${schema.journalEntryLines.date} < ${input.dateFrom}`
-        ));
-      const openingBalance = (openRow?.d||0)-(openRow?.c||0);
+      // الرصيد الافتتاحي
+      const opRes = await db.run(sql`
+        SELECT SUM(debit) as d, SUM(credit) as c
+        FROM journal_entry_lines
+        WHERE company_id=${input.companyId} AND account_code=${input.accountCode} AND date < ${input.dateFrom}`);
+      const opD=Number((opRes as any).rows?.[0]?.d)||0, opC=Number((opRes as any).rows?.[0]?.c)||0;
+      const openingBalance = opD - opC;
 
-      const lines = await db.select({
-        id:schema.journalEntryLines.id,
-        date:schema.journalEntryLines.date,
-        label:schema.journalEntryLines.label,
-        partnerName:schema.journalEntryLines.partnerName,
-        debit:schema.journalEntryLines.debit,
-        credit:schema.journalEntryLines.credit,
-        entryName:schema.journalEntries.name,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          eq(schema.journalEntryLines.accountCode, input.accountCode),
-          sql`${schema.journalEntryLines.date} >= ${input.dateFrom}`,
-          sql`${schema.journalEntryLines.date} <= ${input.dateTo}`,
-          sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-        ))
-        .orderBy(schema.journalEntryLines.date);
+      // حركات الفترة
+      const lRes = await db.run(sql`
+        SELECT jl.id, jl.date, jl.label, jl.partner_name, jl.debit, jl.credit, je.name as entry_name
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId} AND jl.account_code=${input.accountCode}
+          AND jl.date >= ${input.dateFrom} AND jl.date <= ${input.dateTo}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+        ORDER BY jl.date, jl.id`);
 
       let balance = openingBalance;
-      return { openingBalance, lines:lines.map(l=>{ balance+=(l.debit||0)-(l.credit||0); return {...l,balance}; }) };
+      const lines = ((lRes as any).rows||[]).map((l:any) => {
+        balance += (Number(l.debit)||0) - (Number(l.credit)||0);
+        return { id:l.id, date:l.date, label:l.label||"", partnerName:l.partner_name||"",
+                 debit:Number(l.debit)||0, credit:Number(l.credit)||0,
+                 entryName:l.entry_name||"", balance };
+      });
+      return { openingBalance, lines };
     }),
 
   // التحليل الشهري
   monthlyAnalysis: protectedProcedure
     .input(z.object({ companyId:z.number(), year:z.number() }))
     .query(async ({ input }) => {
-      // جلب كل البيانات السنوية دفعة واحدة (أسرع)
-      const allRows = await db.run(sql`
-        SELECT substr(jl.date,6,2) as month_num, jl.account_type,
-               SUM(jl.debit) as debit, SUM(jl.credit) as credit
+      const res = await db.run(sql`
+        SELECT substr(jl.date,6,2) as m, jl.account_type,
+               SUM(jl.debit) as d, SUM(jl.credit) as c
         FROM journal_entry_lines jl
         LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
-        WHERE jl.company_id = ${input.companyId}
-          AND jl.date >= ${input.year + '-01-01'}
-          AND jl.date <= ${input.year + '-12-31'}
+        WHERE jl.company_id=${input.companyId}
+          AND jl.date >= ${input.year+'-01-01'} AND jl.date <= ${input.year+'-12-31'}
           AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
-        GROUP BY month_num, jl.account_type`);
+        GROUP BY m, jl.account_type`);
 
       const months = Array.from({length:12},(_,i)=>({month:i+1,revenue:0,expenses:0,profit:0}));
-      for (const r of (allRows as any).rows||[]) {
-        const mi = parseInt(r.month_num||"0")-1;
+      for (const r of (res as any).rows||[]) {
+        const mi = parseInt(String(r.m||"0"))-1;
         if (mi<0||mi>11) continue;
-        const d=Number(r.debit)||0, c=Number(r.credit)||0;
-        const type=r.account_type||"";
-        if (type==="revenue")  months[mi].revenue  += c-d;
+        const type = r.account_type||"";
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (type==="revenue")                     months[mi].revenue  += c-d;
         else if (type==="expenses"||type==="cogs") months[mi].expenses += d-c;
       }
       months.forEach(m=>m.profit=m.revenue-m.expenses);
@@ -877,54 +867,56 @@ const journalRouter = router({
   partnerStatement: protectedProcedure
     .input(z.object({ companyId:z.number(), partnerName:z.string(), dateFrom:z.string(), dateTo:z.string() }))
     .query(async ({ input }) => {
-      const [openRow] = await db.select({ d:sql<number>`sum(debit)`, c:sql<number>`sum(credit)` })
-        .from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          eq(schema.journalEntryLines.partnerName, input.partnerName),
-          sql`${schema.journalEntryLines.date} < ${input.dateFrom}`,
-          sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-        ));
-      const openingBalance = (openRow?.d||0)-(openRow?.c||0);
+      const opRes = await db.run(sql`
+        SELECT SUM(debit) as d, SUM(credit) as c
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId} AND jl.partner_name=${input.partnerName}
+          AND jl.date < ${input.dateFrom} AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')`);
+      const opBalance = (Number((opRes as any).rows?.[0]?.d)||0) - (Number((opRes as any).rows?.[0]?.c)||0);
 
-      const lines = await db.select({
-        date:schema.journalEntryLines.date, label:schema.journalEntryLines.label,
-        accountCode:schema.journalEntryLines.accountCode, accountName:schema.journalEntryLines.accountName,
-        debit:schema.journalEntryLines.debit, credit:schema.journalEntryLines.credit,
-        entryName:schema.journalEntries.name,
-      }).from(schema.journalEntryLines)
-        .innerJoin(schema.journalEntries, eq(schema.journalEntryLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntryLines.companyId, input.companyId),
-          eq(schema.journalEntryLines.partnerName, input.partnerName),
-          sql`${schema.journalEntryLines.date} >= ${input.dateFrom}`,
-          sql`${schema.journalEntryLines.date} <= ${input.dateTo}`,
-          sql`${schema.journalEntries.name} != 'رصيد افتتاحي'`
-        ))
-        .orderBy(schema.journalEntryLines.date);
+      const lRes = await db.run(sql`
+        SELECT jl.date, jl.label, jl.account_code, jl.account_name, jl.debit, jl.credit, je.name as entry_name
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId} AND jl.partner_name=${input.partnerName}
+          AND jl.date >= ${input.dateFrom} AND jl.date <= ${input.dateTo}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+        ORDER BY jl.date, jl.id`);
 
-      let balance=openingBalance;
-      return { openingBalance, lines:lines.map(l=>{ balance+=(l.debit||0)-(l.credit||0); return {...l,balance}; }), finalBalance:balance };
+      let balance = opBalance;
+      const lines = ((lRes as any).rows||[]).map((l:any) => {
+        balance += (Number(l.debit)||0)-(Number(l.credit)||0);
+        return { date:l.date, label:l.label||"", accountCode:l.account_code, accountName:l.account_name,
+                 debit:Number(l.debit)||0, credit:Number(l.credit)||0, entryName:l.entry_name||"", balance };
+      });
+      return { openingBalance:opBalance, lines, finalBalance:balance };
     }),
 
+  // الحسابات المتاحة
   getAccounts: protectedProcedure
     .input(z.object({ companyId:z.number() }))
     .query(async ({ input }) => {
-      return db.select({ accountCode:schema.journalEntryLines.accountCode, accountName:schema.journalEntryLines.accountName, accountType:schema.journalEntryLines.accountType })
-        .from(schema.journalEntryLines).where(eq(schema.journalEntryLines.companyId, input.companyId))
-        .groupBy(schema.journalEntryLines.accountCode).orderBy(schema.journalEntryLines.accountCode);
+      const res = await db.run(sql`
+        SELECT DISTINCT account_code, account_name, account_type
+        FROM journal_entry_lines WHERE company_id=${input.companyId}
+        ORDER BY account_code`);
+      return (res as any).rows||[];
     }),
 
+  // الشركاء المتاحين
   getPartners: protectedProcedure
     .input(z.object({ companyId:z.number() }))
     .query(async ({ input }) => {
-      return db.select({ partnerName:schema.journalEntryLines.partnerName })
-        .from(schema.journalEntryLines)
-        .where(and(eq(schema.journalEntryLines.companyId, input.companyId), sql`partner_name != '' AND partner_name IS NOT NULL`))
-        .groupBy(schema.journalEntryLines.partnerName).orderBy(schema.journalEntryLines.partnerName);
+      const res = await db.run(sql`
+        SELECT DISTINCT partner_name
+        FROM journal_entry_lines
+        WHERE company_id=${input.companyId} AND partner_name IS NOT NULL AND partner_name != ''
+        ORDER BY partner_name`);
+      return (res as any).rows||[];
     }),
 });
+
 
 // ── AI ─────────────────────────────────────────────────────────────────────────
 const aiRouter = router({
