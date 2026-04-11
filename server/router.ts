@@ -864,6 +864,128 @@ const journalRouter = router({
       return results;
     }),
 
+  // ── تحليل المراكز التحليلية ──────────────────────────────────────────────
+
+  // قائمة المراكز التحليلية مع ملخص مالي
+  analyticCenters: protectedProcedure
+    .input(z.object({ companyId:z.number(), dateFrom:z.string(), dateTo:z.string() }))
+    .query(async ({ input }) => {
+      const { companyId:cid, dateFrom:dF, dateTo:dT } = input;
+
+      // تأكد من وجود الجداول
+      await db.run(sql`CREATE TABLE IF NOT EXISTS analytic_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL,
+        odoo_analytic_id INTEGER NOT NULL, name TEXT NOT NULL, code TEXT,
+        UNIQUE(company_id, odoo_analytic_id))`).catch(()=>{});
+      await db.run(sql`CREATE TABLE IF NOT EXISTS analytic_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL,
+        journal_entry_line_id INTEGER, journal_entry_id INTEGER,
+        odoo_analytic_id INTEGER NOT NULL, analytic_name TEXT NOT NULL,
+        account_code TEXT, account_name TEXT, account_type TEXT,
+        partner_name TEXT, label TEXT, date TEXT, percentage REAL DEFAULT 100,
+        debit REAL DEFAULT 0, credit REAL DEFAULT 0, amount REAL DEFAULT 0)`).catch(()=>{});
+
+      // هل توجد بيانات تحليلية؟
+      const alCnt = await db.run(sql`SELECT count(*) n FROM analytic_lines WHERE company_id=${cid}`).catch(()=>({rows:[{n:0}]}));
+      const hasAnalytic = Number((alCnt as any).rows?.[0]?.n||0) > 0;
+
+      if (!hasAnalytic) {
+        // بديل: بناء التحليل من journal_entry_lines مباشرة عبر account_code prefix
+        const rows = await db.run(sql`
+          SELECT
+            CASE
+              WHEN jl.account_code LIKE '6%' THEN 'مصروفات تشغيلية'
+              WHEN jl.account_code LIKE '5%' THEN 'تكلفة مبيعات'
+              WHEN jl.account_code LIKE '4%' THEN 'إيرادات'
+              WHEN jl.account_code LIKE '7%' THEN 'إيرادات أخرى'
+              WHEN jl.account_code LIKE '8%' THEN 'مصروفات أخرى'
+              ELSE 'أخرى'
+            END as center_name,
+            jl.account_type,
+            SUM(jl.debit) d, SUM(jl.credit) c, count(*) n
+          FROM journal_entry_lines jl
+          LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+          WHERE jl.company_id=${cid} AND jl.date>=${dF} AND jl.date<=${dT}
+            AND jl.account_type IN ('revenue','cogs','expenses','other_income','other_expenses')
+            AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+          GROUP BY center_name, jl.account_type
+          ORDER BY SUM(jl.debit+jl.credit) DESC`);
+
+        // تجميع حسب المركز
+        const centers: Record<string,any> = {};
+        for (const r of (rows as any).rows||[]) {
+          const k = String(r.center_name);
+          if (!centers[k]) centers[k] = { name:k, revenue:0, cogs:0, expenses:0, otherIncome:0, lines:0 };
+          const d=Number(r.d)||0, c=Number(r.c)||0;
+          centers[k].lines += Number(r.n)||0;
+          if (r.account_type==="revenue")       centers[k].revenue     += c-d;
+          else if (r.account_type==="cogs")     centers[k].cogs        += d-c;
+          else if (r.account_type==="expenses") centers[k].expenses    += d-c;
+          else if (r.account_type==="other_income")   centers[k].revenue  += c-d;
+          else if (r.account_type==="other_expenses") centers[k].expenses += d-c;
+        }
+        const result = Object.values(centers).map((c:any) => ({
+          ...c,
+          grossProfit: c.revenue - c.cogs,
+          netProfit:   c.revenue - c.cogs - c.expenses,
+          totalCost:   c.cogs + c.expenses,
+          margin:      c.revenue>0 ? (c.revenue-c.cogs-c.expenses)/c.revenue*100 : 0,
+        })).sort((a:any,b:any)=>b.totalCost-a.totalCost);
+        return { source:"account_prefix", centers:result };
+      }
+
+      // مصدر حقيقي: analytic_lines
+      const rows = await db.run(sql`
+        SELECT
+          odoo_analytic_id, analytic_name,
+          account_type,
+          SUM(debit) d, SUM(credit) c, count(*) n
+        FROM analytic_lines
+        WHERE company_id=${cid} AND date>=${dF} AND date<=${dT}
+        GROUP BY odoo_analytic_id, account_type
+        ORDER BY odoo_analytic_id`);
+
+      const centers: Record<string,any> = {};
+      for (const r of (rows as any).rows||[]) {
+        const k = String(r.odoo_analytic_id);
+        if (!centers[k]) centers[k] = {
+          id:r.odoo_analytic_id, name:r.analytic_name,
+          revenue:0, cogs:0, expenses:0, otherIncome:0, lines:0
+        };
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        centers[k].lines += Number(r.n)||0;
+        if (r.account_type==="revenue")       centers[k].revenue     += c-d;
+        else if (r.account_type==="cogs")     centers[k].cogs        += d-c;
+        else if (r.account_type==="expenses") centers[k].expenses    += d-c;
+        else if (r.account_type==="other_income")   centers[k].revenue  += c-d;
+        else if (r.account_type==="other_expenses") centers[k].expenses += d-c;
+      }
+      const result = Object.values(centers).map((c:any) => ({
+        ...c,
+        grossProfit: c.revenue - c.cogs,
+        netProfit:   c.revenue - c.cogs - c.expenses,
+        totalCost:   c.cogs + c.expenses,
+        margin:      c.revenue>0?(c.revenue-c.cogs-c.expenses)/c.revenue*100:0,
+      })).sort((a:any,b:any)=>b.totalCost-a.totalCost);
+      return { source:"analytic_distribution", centers:result };
+    }),
+
+  // تفاصيل مركز تحليلي واحد
+  analyticCenterDetail: protectedProcedure
+    .input(z.object({ companyId:z.number(), centerId:z.string(), dateFrom:z.string(), dateTo:z.string() }))
+    .query(async ({ input }) => {
+      const { companyId:cid, centerId, dateFrom:dF, dateTo:dT } = input;
+      const rows = await db.run(sql`
+        SELECT account_code, account_name, account_type, partner_name,
+               SUM(debit) d, SUM(credit) c, count(*) n
+        FROM analytic_lines
+        WHERE company_id=${cid} AND odoo_analytic_id=${centerId}
+          AND date>=${dF} AND date<=${dT}
+        GROUP BY account_code, partner_name
+        ORDER BY SUM(debit+credit) DESC LIMIT 50`).catch(()=>({rows:[]}));
+      return (rows as any).rows||[];
+    }),
+
   // الشركاء المتاحين
   getPartners: protectedProcedure
     .input(z.object({ companyId:z.number() }))

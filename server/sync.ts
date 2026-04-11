@@ -121,6 +121,31 @@ async function setupTables(db: Client): Promise<void> {
       role TEXT DEFAULT 'accountant', is_active INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
       last_login TEXT)`,
+    `CREATE TABLE IF NOT EXISTS analytic_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER NOT NULL,
+      odoo_analytic_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      code TEXT,
+      plan_name TEXT,
+      UNIQUE(company_id, odoo_analytic_id))`,
+    `CREATE TABLE IF NOT EXISTS analytic_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER NOT NULL,
+      journal_entry_line_id INTEGER,
+      journal_entry_id INTEGER,
+      odoo_analytic_id INTEGER NOT NULL,
+      analytic_name TEXT NOT NULL,
+      account_code TEXT,
+      account_name TEXT,
+      account_type TEXT,
+      partner_name TEXT,
+      label TEXT,
+      date TEXT,
+      percentage REAL DEFAULT 100,
+      debit REAL DEFAULT 0,
+      credit REAL DEFAULT 0,
+      amount REAL DEFAULT 0)`,
   ];
   for (const ddl of tables) {
     await db.execute(ddl).catch(() => {});
@@ -183,6 +208,25 @@ export async function runFullSync(params: {
   }
   log(`✅ دليل الحسابات: ${coaCount} حساب`);
 
+  // ── جلب الحسابات التحليلية من Odoo ─────────────────────────────────────
+  log("🎯 استيراد المراكز التحليلية...");
+  const analyticMap: Record<number, { name: string; code: string }> = {};
+  try {
+    const analytics = await conn.getAnalyticAccounts(oid);
+    for (const a of analytics) {
+      const aName = String(a.name || "");
+      const aCode = String(a.code || "");
+      analyticMap[Number(a.id)] = { name: aName, code: aCode };
+      await db.execute({
+        sql: `INSERT OR REPLACE INTO analytic_accounts (company_id, odoo_analytic_id, name, code) VALUES (?,?,?,?)`,
+        args: [cid, a.id, aName, aCode]
+      }).catch(() => {});
+    }
+    log(`✅ المراكز التحليلية: ${analytics.length} مركز`);
+  } catch(e: any) {
+    log(`⚠️ المراكز التحليلية: ${e.message?.slice(0,50)}`);
+  }
+
   // ── 2. الشركاء ────────────────────────────────────────────────────────────
   log("👥 استيراد الشركاء...");
   const partners = await conn.getPartners().catch(() => [] as any[]);
@@ -200,6 +244,7 @@ export async function runFullSync(params: {
   // ── 3. مسح البيانات القديمة ───────────────────────────────────────────────
   log("🗑️ مسح البيانات القديمة...");
   await db.execute(`DELETE FROM journal_entry_lines WHERE company_id=${cid}`);
+  await db.execute(`DELETE FROM analytic_lines WHERE company_id=${cid}`).catch(()=>{});
   await db.execute(`DELETE FROM journal_entries WHERE company_id=${cid}`);
 
   // ── 4. الرصيد الافتتاحي ───────────────────────────────────────────────────

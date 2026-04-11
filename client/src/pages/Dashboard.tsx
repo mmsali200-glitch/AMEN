@@ -2987,6 +2987,344 @@ function MultiCompanyPage({ currentUser }:any) {
 }
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎯 صفحة المراكز التحليلية (Cost/Profit Centers)
+// ══════════════════════════════════════════════════════════════════════════════
+function AnalyticCentersPage({ companyId, co }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const [selCenter, setSelCenter] = useState<any>(null);
+  const [view, setView]           = useState<"table"|"chart"|"detail">("table");
+
+  const { data, isLoading } = (trpc as any).journal.analyticCenters.useQuery(
+    { companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId }
+  );
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const centers: any[] = data?.centers || [];
+  const isRealAnalytic = data?.source === "analytic_distribution";
+
+  // KPIs
+  const totalCost    = centers.reduce((s,c)=>s+c.totalCost,0);
+  const totalRev     = centers.reduce((s,c)=>s+c.revenue,0);
+  const totalProfit  = centers.reduce((s,c)=>s+c.netProfit,0);
+  const profitable   = centers.filter(c=>c.netProfit>0).length;
+  const topCost      = centers[0];
+  const topProfit    = [...centers].sort((a,b)=>b.netProfit-a.netProfit)[0];
+  const active       = centers.filter(c=>c.lines>0).length;
+
+  const maxCost = Math.max(...centers.map(c=>c.totalCost),1);
+  const maxRev  = Math.max(...centers.map(c=>c.revenue),1);
+
+  // Colors for pie chart
+  const PIE_COLORS = [C.primary,C.teal,C.amber,C.purple,C.red,C.green,"#06B6D4","#F97316","#8B5CF6","#EC4899","#14B8A6","#F59E0B","#6366F1","#84CC16","#EF4444"];
+
+  // Pie segments
+  const top15 = centers.slice(0,15);
+  const pieTotal = top15.reduce((s,c)=>s+c.totalCost,0)||1;
+  let cumAngle = -90;
+  const pieSlices = top15.map((c,i)=>{
+    const pct = c.totalCost/pieTotal;
+    const angle = pct*360;
+    const start = cumAngle;
+    cumAngle += angle;
+    return { ...c, pct, start, end:cumAngle, color:PIE_COLORS[i%PIE_COLORS.length] };
+  });
+
+  const polarToCart = (cx:number,cy:number,r:number,deg:number) => ({
+    x: cx + r*Math.cos(deg*Math.PI/180),
+    y: cy + r*Math.sin(deg*Math.PI/180)
+  });
+
+  const PieChart = () => (
+    <svg viewBox="0 0 200 200" style={{ width:"100%", maxWidth:220, height:220 }}>
+      {pieSlices.map((s,i)=>{
+        const large = (s.end-s.start)>180?1:0;
+        const p1 = polarToCart(100,100,85,s.start);
+        const p2 = polarToCart(100,100,85,s.end);
+        return (
+          <g key={i}>
+            <path
+              d={`M100,100 L${p1.x},${p1.y} A85,85 0 ${large},1 ${p2.x},${p2.y} Z`}
+              fill={s.color} stroke="#fff" strokeWidth="1.5"
+              opacity={selCenter?.name===s.name?1:0.85}
+              onClick={()=>setSelCenter(selCenter?.name===s.name?null:s)}
+              style={{ cursor:"pointer" }}
+            />
+          </g>
+        );
+      })}
+      <circle cx="100" cy="100" r="40" fill="#fff"/>
+      <text x="100" y="95" textAnchor="middle" fontSize="10" fill={C.textSec}>المراكز</text>
+      <text x="100" y="110" textAnchor="middle" fontSize="13" fontWeight="bold" fill={C.text}>{centers.length}</text>
+    </svg>
+  );
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎯 المراكز التحليلية</h2>
+          <div style={{ display:"flex", gap:8, marginTop:4, alignItems:"center" }}>
+            <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
+            {isRealAnalytic
+              ? <Badge label="✅ بيانات من analytic_distribution" bg={C.greenLight} color={C.green}/>
+              : <Badge label="⚠️ تصنيف تقديري بالكود — أعد المزامنة" bg={C.amberLight} color={C.amber}/>}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <span style={{ color:C.muted }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:16 }}>
+        {[
+          {l:"المراكز النشطة",        v:String(active),              icon:"🎯", c:C.primary,  bg:C.primaryLight},
+          {l:"إجمالي التكاليف",       v:fmtM(totalCost),             icon:"💸", c:C.red,      bg:C.redLight},
+          {l:"إجمالي الإيرادات",      v:fmtM(totalRev),              icon:"💰", c:C.teal,     bg:C.tealLight},
+          {l:"الصافي (ربح/خسارة)",    v:fmtM(totalProfit),           icon:totalProfit>=0?"📈":"📉", c:totalProfit>=0?C.green:C.red, bg:totalProfit>=0?C.greenLight:C.redLight},
+          {l:"مراكز رابحة",           v:`${profitable}/${centers.length}`, icon:"✅", c:C.purple, bg:C.purpleLight},
+        ].map((s,i)=>(
+          <Card key={i} style={{ padding:"14px 16px", background:s.bg, border:`none` }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <div><p style={{ fontSize:10, color:C.textSec, margin:"0 0 4px" }}>{s.l}</p><p style={{ fontSize:18, fontWeight:900, color:s.c, margin:0 }}>{s.v}</p></div>
+              <span style={{ fontSize:22 }}>{s.icon}</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Top cards */}
+      {(topCost||topProfit) && (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+          {topCost && (
+            <Card style={{ padding:"12px 16px", background:C.redLight, border:`1px solid #FECACA` }}>
+              <p style={{ fontSize:10, color:C.muted, margin:"0 0 4px" }}>🔺 أعلى مركز تكلفة</p>
+              <p style={{ fontWeight:800, color:C.red, margin:"0 0 2px", fontSize:14 }}>{topCost.name}</p>
+              <p style={{ color:C.red, fontSize:13, margin:0 }}>{fmtM(topCost.totalCost)}</p>
+            </Card>
+          )}
+          {topProfit && topProfit.netProfit > 0 && (
+            <Card style={{ padding:"12px 16px", background:C.greenLight, border:`1px solid #A7F3D0` }}>
+              <p style={{ fontSize:10, color:C.muted, margin:"0 0 4px" }}>🏆 أعلى مركز ربحية</p>
+              <p style={{ fontWeight:800, color:C.green, margin:"0 0 2px", fontSize:14 }}>{topProfit.name}</p>
+              <p style={{ color:C.green, fontSize:13, margin:0 }}>{fmtM(topProfit.netProfit)}</p>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* View tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+        {[{k:"table",l:"📋 جدول المراكز"},{k:"chart",l:"📊 رسم بياني"},{k:"detail",l:"🔍 تفاصيل مركز"}].map(v=>(
+          <button key={v.k} onClick={()=>setView(v.k as any)}
+            style={{ padding:"8px 18px", borderRadius:9, border:`1.5px solid ${view===v.k?C.primary:C.border}`, background:view===v.k?C.primary:"#fff", color:view===v.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:view===v.k?700:400 }}>
+            {v.l}
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> : !centers.length ? <NoData text="لا توجد بيانات — قم بالمزامنة أولاً"/> : (
+        <>
+          {/* ── TABLE VIEW ── */}
+          {view==="table" && (
+            <Card style={{ overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:750 }}>
+                  <thead>
+                    <tr style={{ background:C.primaryLight }}>
+                      {["#","المركز","الإيرادات","تكلفة مباشرة","مصروفات","إجمالي التكاليف","مجمل الربح","صافي الربح/خسارة","الهامش%","حركات"].map(h=>(
+                        <th key={h} style={{ padding:"10px 10px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap", fontSize:10 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {centers.map((c:any,i:number)=>(
+                      <tr key={i} onClick={()=>{setSelCenter(c);setView("detail");}}
+                        style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF", cursor:"pointer", transition:"background 0.1s" }}
+                        onMouseEnter={e=>(e.currentTarget as any).style.background="#EFF6FF"}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background=i%2===0?"#fff":"#F8FAFF"}>
+                        <td style={{ padding:"9px 10px", color:C.muted, fontWeight:600 }}>{i+1}</td>
+                        <td style={{ padding:"9px 10px", color:C.text, fontWeight:700, maxWidth:200 }}>
+                          <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                            <div style={{ width:8,height:8,borderRadius:"50%",background:PIE_COLORS[i%PIE_COLORS.length],flexShrink:0 }}/>
+                            {c.name}
+                          </div>
+                        </td>
+                        <td style={{ padding:"9px 10px", color:C.primary,fontWeight:600 }}>{c.revenue>0?fmt(c.revenue):"—"}</td>
+                        <td style={{ padding:"9px 10px", color:C.amber  }}>{c.cogs>0?fmt(c.cogs):"—"}</td>
+                        <td style={{ padding:"9px 10px", color:C.red    }}>{c.expenses>0?fmt(c.expenses):"—"}</td>
+                        <td style={{ padding:"9px 10px", color:C.red, fontWeight:700 }}>{fmt(c.totalCost)}</td>
+                        <td style={{ padding:"9px 10px", color:c.grossProfit>=0?C.teal:C.red }}>{c.grossProfit!==0?fmt(c.grossProfit):"—"}</td>
+                        <td style={{ padding:"9px 10px", fontWeight:800, color:c.netProfit>=0?C.green:C.red }}>
+                          {c.netProfit>=0?fmt(c.netProfit):`(${fmt(Math.abs(c.netProfit))})`}
+                        </td>
+                        <td style={{ padding:"9px 10px" }}>
+                          {c.revenue>0
+                            ? <Badge label={`${c.margin.toFixed(1)}%`} bg={c.margin>20?C.greenLight:c.margin>0?C.amberLight:C.redLight} color={c.margin>20?C.green:c.margin>0?C.amber:C.red}/>
+                            : <span style={{ color:C.muted }}>—</span>}
+                        </td>
+                        <td style={{ padding:"9px 10px", color:C.muted }}>{c.lines}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+                      <td colSpan={2} style={{ padding:"10px", fontWeight:800, color:C.primary }}>المجموع</td>
+                      <td style={{ padding:"10px", color:C.primary, fontWeight:800 }}>{fmt(totalRev)}</td>
+                      <td style={{ padding:"10px", color:C.amber,   fontWeight:800 }}>{fmt(centers.reduce((s:number,c:any)=>s+c.cogs,0))}</td>
+                      <td style={{ padding:"10px", color:C.red,     fontWeight:800 }}>{fmt(centers.reduce((s:number,c:any)=>s+c.expenses,0))}</td>
+                      <td style={{ padding:"10px", color:C.red,     fontWeight:800 }}>{fmt(totalCost)}</td>
+                      <td style={{ padding:"10px", color:C.teal,    fontWeight:800 }}>{fmt(centers.reduce((s:number,c:any)=>s+c.grossProfit,0))}</td>
+                      <td style={{ padding:"10px", color:totalProfit>=0?C.green:C.red, fontWeight:800 }}>{totalProfit>=0?fmt(totalProfit):`(${fmt(Math.abs(totalProfit))})`}</td>
+                      <td colSpan={2}><Badge label={totalRev>0?`${((totalProfit/totalRev)*100).toFixed(1)}%`:"—"} bg={totalProfit>=0?C.greenLight:C.redLight} color={totalProfit>=0?C.green:C.red}/></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* ── CHART VIEW ── */}
+          {view==="chart" && (
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
+              {/* Horizontal bar chart */}
+              <Card style={{ padding:"20px" }}>
+                <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 16px" }}>📊 أعلى 15 مركز حسب التكاليف</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {centers.slice(0,15).map((c:any,i:number)=>(
+                    <div key={i}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                          <div style={{ width:8,height:8,borderRadius:"50%",background:PIE_COLORS[i%PIE_COLORS.length],flexShrink:0 }}/>
+                          <span style={{ fontSize:11, color:C.text, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.name}</span>
+                        </div>
+                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                          {c.revenue>0 && <span style={{ fontSize:10, color:C.primary }}>ر:{fmtM(c.revenue)}</span>}
+                          <span style={{ fontSize:11, color:C.red, fontWeight:700 }}>{fmtM(c.totalCost)}</span>
+                          {c.netProfit!==0 && (
+                            <Badge label={c.netProfit>=0?`+${fmtM(c.netProfit)}`:`-${fmtM(Math.abs(c.netProfit))}`}
+                              bg={c.netProfit>=0?C.greenLight:C.redLight} color={c.netProfit>=0?C.green:C.red}/>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", gap:2, height:10 }}>
+                        {/* Revenue bar */}
+                        {c.revenue>0 && <div style={{ width:`${(c.revenue/Math.max(maxCost,maxRev))*100}%`, height:"100%", background:C.primary, borderRadius:"3px 0 0 3px", opacity:0.7 }}/>}
+                        {/* Cost bar */}
+                        <div style={{ width:`${(c.totalCost/maxCost)*100}%`, height:"100%", background:PIE_COLORS[i%PIE_COLORS.length], borderRadius:c.revenue>0?"0 3px 3px 0":"3px", opacity:0.85 }}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:16, marginTop:12, justifyContent:"center" }}>
+                  {[{c:C.primary,l:"الإيرادات"},{c:C.red,l:"التكاليف"}].map(s=>(
+                    <div key={s.l} style={{ display:"flex", gap:4, alignItems:"center" }}>
+                      <div style={{ width:10,height:10,borderRadius:2,background:s.c }}/><span style={{ fontSize:10, color:C.muted }}>{s.l}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Pie chart */}
+              <Card style={{ padding:"20px" }}>
+                <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 12px" }}>🥧 توزيع التكاليف</p>
+                <PieChart/>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:8 }}>
+                  {top15.map((c:any,i:number)=>(
+                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div style={{ display:"flex", gap:5, alignItems:"center" }}>
+                        <div style={{ width:8,height:8,borderRadius:"50%",background:PIE_COLORS[i%PIE_COLORS.length],flexShrink:0 }}/>
+                        <span style={{ fontSize:10, color:C.text, maxWidth:110, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.name}</span>
+                      </div>
+                      <span style={{ fontSize:10, color:C.muted }}>{((c.totalCost/pieTotal)*100).toFixed(1)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* ── DETAIL VIEW ── */}
+          {view==="detail" && (
+            <>
+              {/* Center selector */}
+              <Card style={{ padding:"14px 16px", marginBottom:14 }}>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                  <span style={{ fontSize:12, color:C.muted, fontWeight:600 }}>اختر مركزاً:</span>
+                  {centers.map((c:any,i:number)=>(
+                    <button key={i} onClick={()=>setSelCenter(c)}
+                      style={{ padding:"5px 14px", borderRadius:18, border:`1.5px solid ${selCenter?.name===c.name?PIE_COLORS[i%PIE_COLORS.length]:C.border}`, background:selCenter?.name===c.name?`${PIE_COLORS[i%PIE_COLORS.length]}20`:"#fff", cursor:"pointer", fontSize:11, fontWeight:600, color:selCenter?.name===c.name?PIE_COLORS[i%PIE_COLORS.length]:C.textSec, transition:"all 0.12s" }}>
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              </Card>
+
+              {selCenter ? (
+                <>
+                  {/* Center KPIs */}
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+                    {[
+                      {l:"الإيرادات",     v:fmtM(selCenter.revenue),   c:C.primary, icon:"💰"},
+                      {l:"التكلفة المباشرة",v:fmtM(selCenter.cogs),    c:C.amber,   icon:"📦"},
+                      {l:"المصروفات",     v:fmtM(selCenter.expenses),  c:C.red,     icon:"💸"},
+                      {l:"صافي الربح",   v:selCenter.netProfit>=0?fmtM(selCenter.netProfit):`(${fmtM(Math.abs(selCenter.netProfit))})`,
+                        c:selCenter.netProfit>=0?C.green:C.red, icon:selCenter.netProfit>=0?"✅":"❌"},
+                    ].map((s,i)=>(
+                      <Card key={i} style={{ padding:"14px 16px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between" }}>
+                          <div><p style={{ fontSize:10, color:C.muted, margin:"0 0 4px" }}>{s.l}</p><p style={{ fontSize:17, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p></div>
+                          <span style={{ fontSize:20 }}>{s.icon}</span>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+
+                  {/* Profitability bar */}
+                  {selCenter.revenue > 0 && (
+                    <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+                      <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 12px" }}>📊 هيكل التكاليف والأرباح</p>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {[
+                          {l:"الإيرادات",       v:selCenter.revenue,    pct:100,                             c:C.primary},
+                          {l:"تكلفة المبيعات",  v:selCenter.cogs,       pct:selCenter.cogs/selCenter.revenue*100, c:C.amber},
+                          {l:"مجمل الربح",      v:selCenter.grossProfit,pct:selCenter.grossProfit/selCenter.revenue*100, c:C.teal},
+                          {l:"المصروفات",       v:selCenter.expenses,   pct:selCenter.expenses/selCenter.revenue*100,   c:C.red},
+                          {l:"صافي الربح",      v:selCenter.netProfit,  pct:Math.abs(selCenter.netProfit/selCenter.revenue*100), c:selCenter.netProfit>=0?C.green:C.red},
+                        ].map((r,i)=>(
+                          <div key={i}>
+                            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                              <span style={{ fontSize:12, color:C.textSec }}>{r.l}</span>
+                              <span style={{ fontSize:12, fontWeight:700, color:r.c }}>{fmtM(r.v)} <span style={{ color:C.muted, fontWeight:400 }}>({r.pct.toFixed(1)}%)</span></span>
+                            </div>
+                            <div style={{ background:"#F1F5F9", borderRadius:4, height:7, overflow:"hidden" }}>
+                              <div style={{ width:`${Math.min(100,Math.abs(r.pct))}%`, height:"100%", background:r.c, borderRadius:4 }}/>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  )}
+                </>
+              ) : (
+                <NoData text="اختر مركزاً من القائمة أعلاه"/>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
@@ -3006,6 +3344,7 @@ function MultiCompanyPage({ currentUser }:any) {
       case "compare":           return <PeriodsComparePage companyId={companyId}/>;
       case "monthly-detail":    return <MonthlyDetailPage companyId={companyId} co={co}/>;
       case "multi-company":     return <MultiCompanyPage currentUser={user}/>;
+      case "analytic":          return <AnalyticCentersPage companyId={companyId} co={co}/>;
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;
       case "chatbot":           return <ChatbotPage companyId={companyId} co={co}/>;
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;
