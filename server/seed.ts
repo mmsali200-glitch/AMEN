@@ -194,6 +194,27 @@ async function createOdooTables() {
 }
 createOdooTables().catch(e => console.error("Odoo tables error:", e));
 
+
+// ── Indexes للأداء ───────────────────────────────────────────────────────────
+async function createIndexes() {
+  const idxs = [
+    `CREATE INDEX IF NOT EXISTS idx_jl_co_date     ON journal_entry_lines(company_id, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_jl_co_type     ON journal_entry_lines(company_id, account_type, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_jl_co_code     ON journal_entry_lines(company_id, account_code, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_jl_co_partner  ON journal_entry_lines(company_id, partner_name, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_jl_entry_id    ON journal_entry_lines(journal_entry_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_je_co_date     ON journal_entries(company_id, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_je_co_move     ON journal_entries(company_id, odoo_move_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_al_co_date     ON analytic_lines(company_id, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_al_co_analytic ON analytic_lines(company_id, odoo_analytic_id, date)`,
+    `CREATE INDEX IF NOT EXISTS idx_coa_co         ON accounts_coa(company_id, code)`,
+  ];
+  for (const idx of idxs) {
+    await db.run({ sql: idx }).catch(() => {});
+  }
+  console.log("✓ DB indexes created");
+}
+createIndexes();
 process.exit(0);
 }
 

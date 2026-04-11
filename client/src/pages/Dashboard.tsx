@@ -1,7 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "../lib/trpc";
 
-const C = { bg:"#F8FAFF", sidebar:"#FFFFFF", border:"#E2E8F0", primary:"#2563EB", primaryLight:"#EFF6FF", primarySoft:"#DBEAFE", teal:"#0D9488", tealLight:"#F0FDFA", green:"#059669", greenLight:"#ECFDF5", red:"#DC2626", redLight:"#FEF2F2", amber:"#D97706", amberLight:"#FFFBEB", purple:"#7C3AED", purpleLight:"#F5F3FF", text:"#1E293B", textSec:"#475569", muted:"#94A3B8" };
+// ── Theme System (Light + Dark Mode) ─────────────────────────────────────────
+const THEMES = {
+  light: { bg:"#F8FAFF", sidebar:"#FFFFFF", surface:"#FFFFFF", border:"#E2E8F0", primary:"#2563EB", primaryLight:"#EFF6FF", primarySoft:"#DBEAFE", teal:"#0D9488", tealLight:"#F0FDFA", green:"#059669", greenLight:"#ECFDF5", red:"#DC2626", redLight:"#FEF2F2", amber:"#D97706", amberLight:"#FFFBEB", purple:"#7C3AED", purpleLight:"#F5F3FF", text:"#1E293B", textSec:"#475569", muted:"#94A3B8" },
+  dark:  { bg:"#0F172A", sidebar:"#1E293B", surface:"#1E293B", border:"#334155", primary:"#60A5FA", primaryLight:"#1E3A5F", primarySoft:"#1E40AF", teal:"#2DD4BF", tealLight:"#0F3D38", green:"#34D399", greenLight:"#064E3B", red:"#F87171", redLight:"#450A0A", amber:"#FBB80A", amberLight:"#422006", purple:"#A78BFA", purpleLight:"#2E1065", text:"#F1F5F9", textSec:"#94A3B8", muted:"#64748B" },
+};
+let C = THEMES.light;
 const fmt = (n:number) => new Intl.NumberFormat("ar").format(Math.round(n));
 const fmtM = (n:number) => n>=1000000?`${(n/1000000).toFixed(1)}M`:n>=1000?`${(n/1000).toFixed(0)}K`:fmt(n);
 const ARMonths = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -1651,7 +1656,7 @@ function TrialBalancePage({ companyId }:any) {
   const yr = new Date().getFullYear();
   const [dF, setDF] = useState(`${yr}-01-01`);
   const [dT, setDT] = useState(`${yr}-12-31`);
-  const { data, isLoading } = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+  const { data, isLoading } = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
 
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
   return (
@@ -1717,7 +1722,7 @@ function IncomePage({ companyId }:any) {
   const yr = new Date().getFullYear();
   const [dF, setDF] = useState(`${yr}-01-01`);
   const [dT, setDT] = useState(`${yr}-12-31`);
-  const { data, isLoading } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+  const { data, isLoading } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
 
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
   const rows = data ? [
@@ -1912,7 +1917,7 @@ function GeneralLedgerPage({ companyId }:any) {
 // ── التحليل الشهري ────────────────────────────────────────────────────────────
 function MonthlyPage({ companyId }:any) {
   const [year, setYear] = useState(new Date().getFullYear());
-  const { data, isLoading } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId });
+  const { data, isLoading } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId, staleTime:10*60*1000 });
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
   const maxVal = data ? Math.max(...data.map((m:any)=>Math.max(m.revenue||0,m.expenses||0)),1) : 1;
   const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -2464,7 +2469,7 @@ function CostAnalysisPage({ companyId }:any) {
   const yr = new Date().getFullYear();
   const [dF, setDF] = useState(`${yr}-01-01`);
   const [dT, setDT] = useState(`${yr}-12-31`);
-  const { data:income } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+  const { data:income } = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
   const { data:monthly } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year:yr }, { enabled:!!companyId });
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
   if (!income) return <div style={{ textAlign:"center",padding:60 }}><Spinner/></div>;
@@ -2648,7 +2653,7 @@ function MonthlyDetailPage({ companyId, co }:any) {
   const yr = new Date().getFullYear();
   const [year, setYear] = useState(yr);
   const [selMonth, setSelMonth] = useState(new Date().getMonth()+1);
-  const { data:annual } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId });
+  const { data:annual } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId, staleTime:10*60*1000 });
   const { data:detail, isLoading } = (trpc as any).journal.monthlyDetail.useQuery({ companyId, year, month:selMonth }, { enabled:!!companyId });
 
   const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
@@ -3688,9 +3693,9 @@ function ExportPage({ companyId, co }:any) {
   const [dT, setDT] = useState(`${yr}-12-31`);
   const [exporting, setExporting] = useState<string|null>(null);
 
-  const { data:income }  = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
-  const { data:balance } = trpc.journal.balanceSheet.useQuery({ companyId, asOf:dT }, { enabled:!!companyId });
-  const { data:tb }      = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+  const { data:income }  = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
+  const { data:balance } = trpc.journal.balanceSheet.useQuery({ companyId, asOf:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
+  const { data:tb }      = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId, staleTime:5*60*1000 });
 
   const exportExcel = async (reportName: string, headers: string[], rows: any[][]) => {
     setExporting(reportName);
@@ -3727,17 +3732,28 @@ function ExportPage({ companyId, co }:any) {
     );
   };
 
-  const exportPDF = async (title: string) => {
+  const exportPDF = async (title: string, tableData?: any) => {
     setExporting(title);
     try {
-      const { default: jsPDF } = await import('jspdf');
-      const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
-      doc.setFontSize(16);
-      doc.text(title, 14, 16);
-      doc.setFontSize(10);
-      doc.text(`${co?.name||""} | الفترة: ${dF} إلى ${dT}`, 14, 24);
-      doc.text("تم الإنشاء بواسطة CFO Intelligence System", 14, 30);
-      doc.save(`${title}-${dT}.pdf`);
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ]);
+      const doc = new (jsPDF as any)({ orientation:'landscape', unit:'mm', format:'a4' });
+      // Header
+      doc.setFillColor(37, 99, 235);
+      doc.rect(0, 0, 297, 18, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14); doc.text(title, 14, 12);
+      doc.setFontSize(9);  doc.text(`${co?.name||""} | ${dF} — ${dT}`, 200, 12);
+      doc.setTextColor(0, 0, 0);
+      // Table
+      if (tableData) {
+        (autoTable as any)(doc, { startY:22, head:[tableData.headers], body:tableData.rows, styles:{ font:'helvetica', fontSize:8 }, headStyles:{ fillColor:[37,99,235] } });
+      } else {
+        doc.setFontSize(11); doc.text("تم الإنشاء بواسطة CFO Intelligence System", 14, 28);
+      }
+      doc.save(`${co?.name||"report"}-${title}-${dT}.pdf`);
     } finally { setExporting(null); }
   };
 
@@ -3859,7 +3875,7 @@ function ExportPage({ companyId, co }:any) {
 
   return (
     <div style={{ display:"flex", height:"100vh", background:C.bg, fontFamily:"'Cairo','Segoe UI',sans-serif", overflow:"hidden" }}>
-      <style>{`*{box-sizing:border-box;} ::-webkit-scrollbar{width:4px;height:4px;} ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;} button,input,select{font-family:inherit;} @keyframes spin{to{transform:rotate(360deg)}} @keyframes bounce{from{transform:translateY(0);opacity:0.4}to{transform:translateY(-4px);opacity:1}} @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}`}</style>
+      <style>{`*{box-sizing:border-box;} ::-webkit-scrollbar{width:4px;height:4px;} ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px;} button,input,select{font-family:inherit;} @keyframes spin{to{transform:rotate(360deg)}} @keyframes bounce{from{transform:translateY(0);opacity:0.4}to{transform:translateY(-4px);opacity:1}} @keyframes blink{0%,100%{opacity:1}50%{opacity:0}} @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}</style>
       <aside style={{ width:open?256:0, background:C.sidebar, flexShrink:0, display:"flex", flexDirection:"column", overflow:"hidden", transition:"width 0.22s ease", borderLeft:`1px solid #E8EFFE`, boxShadow:"2px 0 16px rgba(37,99,235,0.06)" }}>
         <div style={{ minWidth:256, display:"flex", flexDirection:"column", height:"100%" }}>
           <div style={{ padding:"16px 14px 12px", borderBottom:`1px solid #E8EFFE` }}>

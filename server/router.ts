@@ -708,6 +708,49 @@ const journalRouter = router({
       return { lines };
     }),
 
+  // ── Pre-computed Dashboard Summary (fast) ───────────────────────────────
+  dashboardSummary: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      const dF = `${input.year}-01-01`, dT = `${input.year}-12-31`;
+      // Single query for all metrics (replaces 3 separate queries)
+      const res = await db.run(sql`
+        SELECT
+          jl.account_type,
+          SUM(jl.debit)   as d,
+          SUM(jl.credit)  as c,
+          count(*)        as n
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId}
+          AND jl.date>=${dF} AND jl.date<=${dT}
+          AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+        GROUP BY jl.account_type`);
+
+      let rev=0,cogs=0,exp=0,assets=0,liab=0;
+      for (const r of (res as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="revenue")      rev   +=c-d;
+        else if (r.account_type==="cogs")    cogs  +=d-c;
+        else if (r.account_type==="expenses")exp   +=d-c;
+        else if (r.account_type==="assets")  assets+=d-c;
+        else if (r.account_type==="liabilities") liab+=c-d;
+      }
+
+      const eCnt = await db.run(sql`SELECT count(*) n, max(date) mx, min(date) mn FROM journal_entries WHERE company_id=${input.companyId}`);
+      const lCnt = await db.run(sql`SELECT count(*) n FROM journal_entry_lines WHERE company_id=${input.companyId}`);
+
+      return {
+        revenue:rev, cogs, expenses:exp, netProfit:rev-cogs-exp,
+        grossProfit:rev-cogs, grossMargin:rev>0?(rev-cogs)/rev*100:0,
+        netMargin:rev>0?(rev-cogs-exp)/rev*100:0,
+        assets, liabilities:liab, equity:assets-liab,
+        totalEntries:Number((eCnt as any).rows?.[0]?.n)||0,
+        totalLines:Number((lCnt as any).rows?.[0]?.n)||0,
+        dateRange:{ from:(eCnt as any).rows?.[0]?.mn, to:(eCnt as any).rows?.[0]?.mx },
+      };
+    }),
+
   // الحسابات المتاحة
   getAccounts: protectedProcedure
     .input(z.object({ companyId:z.number() }))
