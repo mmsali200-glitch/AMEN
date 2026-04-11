@@ -289,20 +289,29 @@ export class OdooConnector {
   // ── سطور القيود ───────────────────────────────────────────────────────────
   async getJournalLines(moveIds: number[]): Promise<any[]> {
     if (!moveIds.length) return [];
-    const domain = [["move_id","in",moveIds],["display_type","not in",["line_section","line_note"]]];
-    const fields  = ["id","move_id","account_id","name","debit","credit","date","partner_id","ref"];
+    const fields = ["id","move_id","account_id","name","debit","credit","date","partner_id"];
 
+    // محاولة 1: بدون فلتر display_type (يعمل مع كل الإصدارات)
     try {
-      return await this.searchRead("account.move.line", domain, fields, 10000);
-    } catch {
-      // بعض الإصدارات: display_type قد يكون مختلفاً
-      const domain2 = [["move_id","in",moveIds],["exclude_from_invoice_tab","=",false]];
-      try {
-        return await this.searchRead("account.move.line", domain2, fields, 10000);
-      } catch {
-        return await this.searchRead("account.move.line", [["move_id","in",moveIds]], fields, 10000);
-      }
-    }
+      const rows = await this.searchRead(
+        "account.move.line",
+        [["move_id","in",moveIds],["account_id","!=",false]],
+        fields, 10000
+      );
+      if (rows.length > 0) return rows;
+    } catch {}
+
+    // محاولة 2: بدون أي فلتر غير move_id
+    try {
+      const rows = await this.searchRead(
+        "account.move.line",
+        [["move_id","in",moveIds]],
+        fields, 10000
+      );
+      return rows;
+    } catch {}
+
+    return [];
   }
 
   // ── الرصيد الافتتاحي (قبل الفترة) ────────────────────────────────────────

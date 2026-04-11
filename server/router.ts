@@ -551,62 +551,91 @@ const odooRouter = router({
         // ── استيراد القيود والسطور ─────────────────────────────────────────
         const total = await conn.countEntries(input.odooCompanyId, input.dateFrom, input.dateTo);
         let inserted = 0;
-        const batchSize = 100;
+        let totalLines = 0;
+        const batchSize = 50; // حجم أصغر لضمان الاستقرار
 
         for (let offset = 0; offset < total; offset += batchSize) {
           const moves = await conn.getJournalEntries(input.odooCompanyId, input.dateFrom, input.dateTo, batchSize, offset);
           if (!moves.length) break;
 
-          // إدراج القيود
+          // ── الخطوة 1: إدراج القيود وبناء الـ map ──────────────────────────
           const moveToEntryId: Record<number,number> = {};
           for (const move of moves) {
-            const jName = Array.isArray(move.journal_id) ? String(move.journal_id[1]||"") : "";
-            const pName = Array.isArray(move.partner_id) ? String(move.partner_id[1]||"") : "";
-            const mDate = String(move.date||input.dateFrom);
-            try {
-              await db.run(sql`INSERT OR REPLACE INTO journal_entries
-                (company_id, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name, narration)
-                VALUES (${input.companyId}, ${move.id}, ${move.name||""}, ${move.ref||""},
-                        ${jName}, ${mDate}, 'posted',
-                        ${Number(move.amount_total)||0}, ${Number(move.amount_total)||0},
-                        ${pName}, ${move.narration||""})`);
+            const jName  = Array.isArray(move.journal_id) ? String(move.journal_id[1]||"") : String(move.journal_id||"");
+            const pName  = Array.isArray(move.partner_id) ? String(move.partner_id[1]||"") : "";
+            const mDate  = String(move.date || input.dateFrom);
+            const amount = Number(move.amount_total) || 0;
+            const moveId = Number(move.id);
 
-              const eRes = await db.run(sql`SELECT id FROM journal_entries WHERE company_id=${input.companyId} AND odoo_move_id=${move.id} LIMIT 1`);
-              const eId  = (eRes as any).rows?.[0]?.id;
-              if (eId) moveToEntryId[move.id] = Number(eId);
-            } catch {}
+            try {
+              // حذف القديم وإدراج جديد
+              await db.run(sql`DELETE FROM journal_entries WHERE company_id=${input.companyId} AND odoo_move_id=${moveId}`);
+              await db.run(sql`INSERT INTO journal_entries
+                (company_id, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name)
+                VALUES (${input.companyId}, ${moveId}, ${String(move.name||"")}, ${String(move.ref||"")},
+                        ${jName}, ${mDate}, 'posted', ${amount}, ${amount}, ${pName})`);
+
+              // جلب الـ id المُدرج
+              const eRes = await db.run(sql`SELECT id FROM journal_entries WHERE company_id=${input.companyId} AND odoo_move_id=${moveId} LIMIT 1`);
+              const eId = Number((eRes as any).rows?.[0]?.id || 0);
+              if (eId > 0) moveToEntryId[moveId] = eId;
+            } catch(e:any) {
+              console.error(`Entry insert error (move ${moveId}):`, e.message?.slice(0,80));
+            }
           }
 
-          // إدراج السطور
-          const moveIds = moves.map((m:any) => m.id as number);
-          let lines: any[] = [];
-          try { lines = await conn.getJournalLines(moveIds); } catch {}
+          // ── الخطوة 2: جلب السطور لهذه الدفعة ──────────────────────────────
+          const moveIds = Object.keys(moveToEntryId).map(Number);
+          if (moveIds.length === 0) { inserted += moves.length; continue; }
 
+          let lines: any[] = [];
+          try { lines = await conn.getJournalLines(moveIds); } catch(e:any) {
+            console.error("getJournalLines error:", e.message?.slice(0,80));
+          }
+
+          // ── الخطوة 3: إدراج السطور ────────────────────────────────────────
+          let batchLines = 0;
           for (const line of lines) {
-            const moveId = Array.isArray(line.move_id) ? Number(line.move_id[0]) : Number(line.move_id);
-            const entryId = moveToEntryId[moveId];
+            // استخراج move_id
+            const rawMoveId = Array.isArray(line.move_id) ? line.move_id[0] : line.move_id;
+            const moveId    = Number(rawMoveId);
+            const entryId   = moveToEntryId[moveId];
             if (!entryId) continue;
 
-            const accId  = Array.isArray(line.account_id) ? Number(line.account_id[0]) : 0;
-            const info   = coaMap[accId] || (() => {
-              const raw  = Array.isArray(line.account_id) ? String(line.account_id[1]||"") : "";
-              const code = raw.split(" ")[0] || "0000";
-              const name = raw.replace(/^\S+\s+/,"") || "";
-              return { code, name, cfoType: odooTypeToCfoType("", code, name) };
-            })();
+            // استخراج الحساب
+            const accId   = Array.isArray(line.account_id) ? Number(line.account_id[0]) : 0;
+            const accRaw  = Array.isArray(line.account_id) ? String(line.account_id[1]||"") : "";
+            const accCode = (coaMap[accId]?.code) || accRaw.split(" ")[0] || "0000";
+            const accName = (coaMap[accId]?.name) || accRaw.replace(/^\S+\s+/,"") || "";
+            const accType = (coaMap[accId]?.cfoType) || odooTypeToCfoType("", accCode, accName);
 
-            const pName   = Array.isArray(line.partner_id) ? String(line.partner_id[1]||"") : "";
-            const lineDate = String(line.date || moves.find((m:any)=>m.id===moveId)?.date || input.dateFrom);
+            // التاريخ
+            const parentDate = moves.find((m:any)=>Number(m.id)===moveId)?.date;
+            const lineDate   = String(line.date || parentDate || input.dateFrom);
+            if (!lineDate || lineDate.length < 4) continue; // تخطي التواريخ المجهولة
+
+            // المبالغ
+            const debit  = Number(line.debit)  || 0;
+            const credit = Number(line.credit) || 0;
+            if (debit === 0 && credit === 0) continue; // تخطي السطور الصفرية
+
+            // الشريك
+            const pName = Array.isArray(line.partner_id) ? String(line.partner_id[1]||"") : "";
 
             try {
               await db.run(sql`INSERT OR IGNORE INTO journal_entry_lines
                 (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date)
-                VALUES (${entryId}, ${input.companyId}, ${info.code}, ${info.name}, ${info.cfoType},
-                        ${pName}, ${line.name||""}, ${Number(line.debit)||0}, ${Number(line.credit)||0}, ${lineDate})`);
-            } catch {}
+                VALUES (${entryId}, ${input.companyId}, ${accCode}, ${accName}, ${accType},
+                        ${pName}, ${String(line.name||"")}, ${debit}, ${credit}, ${lineDate})`);
+              batchLines++;
+            } catch(e:any) {
+              // تجاهل أخطاء UNIQUE silently
+            }
           }
-          inserted += moves.length;
+          totalLines  += batchLines;
+          inserted    += moves.length;
         }
+        results.totalLines = totalLines;
 
         results.entries      = inserted;
         results.openingLines = openingLines;
