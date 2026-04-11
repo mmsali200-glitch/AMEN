@@ -1157,13 +1157,13 @@ const groupsRouter = router({
 
       // 3. نسخ إعدادات Odoo — مع ضمان وجود الأعمدة
       // أولاً: تأكد من وجود الأعمدة الجديدة
-      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN odoo_company_id INTEGER\`); } catch {}
-      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN odoo_company_name TEXT\`); } catch {}
-      try { await db.run(sql\`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0\`); } catch {}
+      try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_id INTEGER`); } catch {}
+      try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN odoo_company_name TEXT`); } catch {}
+      try { await db.run(sql`ALTER TABLE odoo_configs ADD COLUMN is_connected INTEGER DEFAULT 0`); } catch {}
 
       // ثانياً: INSERT بالقيم
-      await db.run(sql\`DELETE FROM odoo_configs WHERE company_id=${newCo.id}\`);
-      await db.run(sql\`INSERT INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)\`);
+      await db.run(sql`DELETE FROM odoo_configs WHERE company_id=${newCo.id}`);
+      await db.run(sql`INSERT INTO odoo_configs (company_id, url, database, username, password, odoo_company_id, odoo_company_name, is_connected) VALUES (${newCo.id}, ${group.odoo_url}, ${group.odoo_database}, ${group.odoo_username}, ${group.odoo_password}, ${input.odooId}, ${input.name}, 1)`);
 
       // 4. ربط بالمجموعة
       await db.run(sql`INSERT INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, sync_status) VALUES (${input.groupId}, ${newCo.id}, ${input.odooId}, ${input.name}, 'pending')`);
