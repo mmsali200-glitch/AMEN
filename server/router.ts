@@ -719,6 +719,151 @@ const journalRouter = router({
       return (res as any).rows||[];
     }),
 
+  // تحليل الشركة شهرياً بالتفصيل
+  monthlyDetail: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number(), month:z.number() }))
+    .query(async ({ input }) => {
+      const dF = `${input.year}-${String(input.month).padStart(2,"0")}-01`;
+      const dT = `${input.year}-${String(input.month).padStart(2,"0")}-31`;
+
+      // الإيرادات تفصيلياً
+      const rev = await db.run(sql`
+        SELECT jl.account_code, jl.account_name, jl.partner_name,
+               SUM(jl.credit-jl.debit) as amount
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId} AND jl.account_type='revenue'
+          AND jl.date>=${dF} AND jl.date<=${dT}
+          AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+        GROUP BY jl.account_code, jl.partner_name
+        ORDER BY amount DESC LIMIT 20`);
+
+      // المصروفات تفصيلياً
+      const exp = await db.run(sql`
+        SELECT jl.account_code, jl.account_name, jl.partner_name,
+               SUM(jl.debit-jl.credit) as amount
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId}
+          AND jl.account_type IN ('expenses','cogs','other_expenses')
+          AND jl.date>=${dF} AND jl.date<=${dT}
+          AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+        GROUP BY jl.account_code, jl.partner_name
+        ORDER BY amount DESC LIMIT 20`);
+
+      // إجماليات
+      const totals = await db.run(sql`
+        SELECT jl.account_type,
+               SUM(jl.debit) d, SUM(jl.credit) c
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId}
+          AND jl.date>=${dF} AND jl.date<=${dT}
+          AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+        GROUP BY jl.account_type`);
+
+      let revenue=0, cogs=0, expenses=0, otherIncome=0;
+      for (const r of (totals as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="revenue")      revenue    += c-d;
+        else if (r.account_type==="cogs")    cogs       += d-c;
+        else if (r.account_type==="expenses")expenses   += d-c;
+        else if (r.account_type==="other_income") otherIncome += c-d;
+      }
+
+      return {
+        revenue, cogs, expenses, otherIncome,
+        grossProfit: revenue-cogs,
+        netProfit: revenue-cogs-expenses+otherIncome,
+        revenueDetail:  (rev as any).rows||[],
+        expenseDetail:  (exp as any).rows||[],
+      };
+    }),
+
+  // مقارنة شركات متعددة - شهرياً
+  multiCompanyMonthly: protectedProcedure
+    .input(z.object({ companyIds:z.array(z.number()), year:z.number() }))
+    .query(async ({ input }) => {
+      const results: Record<number, any[]> = {};
+      for (const cid of input.companyIds) {
+        const rows = await db.run(sql`
+          SELECT substr(jl.date,6,2) m, jl.account_type,
+                 SUM(jl.debit) d, SUM(jl.credit) c
+          FROM journal_entry_lines jl
+          LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+          WHERE jl.company_id=${cid}
+            AND jl.date>=${input.year+'-01-01'}
+            AND jl.date<=${input.year+'-12-31'}
+            AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+          GROUP BY m, jl.account_type ORDER BY m`);
+
+        const months = Array.from({length:12},(_,i)=>({month:i+1,revenue:0,expenses:0,profit:0,cogs:0}));
+        for (const r of (rows as any).rows||[]) {
+          const mi=parseInt(String(r.m||"0"))-1;
+          if(mi<0||mi>11) continue;
+          const d=Number(r.d)||0, c=Number(r.c)||0;
+          if(r.account_type==="revenue") months[mi].revenue+=c-d;
+          else if(r.account_type==="cogs") months[mi].cogs+=d-c;
+          else if(r.account_type==="expenses") months[mi].expenses+=d-c;
+        }
+        months.forEach(m=>m.profit=m.revenue-m.cogs-m.expenses);
+        results[cid] = months;
+      }
+      return results;
+    }),
+
+  // ملخص مقارنة شركات - سنوي
+  multiCompanySummary: protectedProcedure
+    .input(z.object({ companyIds:z.array(z.number()), year:z.number() }))
+    .query(async ({ input }) => {
+      const results = [];
+      for (const cid of input.companyIds) {
+        const co = await db.select().from(schema.companies).where(eq(schema.companies.id, cid)).limit(1);
+        const rows = await db.run(sql`
+          SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c
+          FROM journal_entry_lines jl
+          LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+          WHERE jl.company_id=${cid}
+            AND jl.date>=${input.year+'-01-01'}
+            AND jl.date<=${input.year+'-12-31'}
+            AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+          GROUP BY jl.account_type`);
+
+        let revenue=0,cogs=0,expenses=0,otherIncome=0;
+        const bsRows = await db.run(sql`
+          SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c
+          FROM journal_entry_lines jl
+          WHERE jl.company_id=${cid} AND jl.date<=${input.year+'-12-31'}
+          GROUP BY jl.account_type`);
+        let assets=0,liab=0,equity=0;
+
+        for (const r of (rows as any).rows||[]) {
+          const d=Number(r.d)||0, c=Number(r.c)||0;
+          if(r.account_type==="revenue") revenue+=c-d;
+          else if(r.account_type==="cogs") cogs+=d-c;
+          else if(r.account_type==="expenses") expenses+=d-c;
+          else if(r.account_type==="other_income") otherIncome+=c-d;
+        }
+        for (const r of (bsRows as any).rows||[]) {
+          const d=Number(r.d)||0, c=Number(r.c)||0;
+          if(r.account_type==="assets") assets+=d-c;
+          else if(r.account_type==="liabilities") liab+=c-d;
+          else if(r.account_type==="equity") equity+=c-d;
+        }
+        const netProfit=revenue-cogs-expenses+otherIncome;
+        results.push({
+          companyId:cid, companyName:co[0]?.name||"شركة "+cid,
+          revenue, cogs, expenses, netProfit,
+          grossProfit:revenue-cogs, grossMargin:revenue>0?(revenue-cogs)/revenue*100:0,
+          netMargin:revenue>0?netProfit/revenue*100:0,
+          assets, liabilities:liab, equity:equity+netProfit,
+          roa:assets>0?netProfit/assets*100:0,
+          roe:(equity+netProfit)>0?netProfit/(equity+netProfit)*100:0,
+        });
+      }
+      return results;
+    }),
+
   // الشركاء المتاحين
   getPartners: protectedProcedure
     .input(z.object({ companyId:z.number() }))

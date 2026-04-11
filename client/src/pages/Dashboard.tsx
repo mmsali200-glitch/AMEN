@@ -2606,6 +2606,387 @@ function PeriodsComparePage({ companyId }:any) {
 }
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📅 تحليل الشركة شهرياً — تفاصيل كل شهر
+// ══════════════════════════════════════════════════════════════════════════════
+function MonthlyDetailPage({ companyId, co }:any) {
+  const yr = new Date().getFullYear();
+  const [year, setYear] = useState(yr);
+  const [selMonth, setSelMonth] = useState(new Date().getMonth()+1);
+  const { data:annual } = trpc.journal.monthlyAnalysis.useQuery({ companyId, year }, { enabled:!!companyId });
+  const { data:detail, isLoading } = (trpc as any).journal.monthlyDetail.useQuery({ companyId, year, month:selMonth }, { enabled:!!companyId });
+
+  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const maxVal = annual ? Math.max(...(annual as any[]).map((m:any)=>Math.max(m.revenue||0,m.expenses||0)),1) : 1;
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="📅 التحليل الشهري التفصيلي" sub={co?.name}/>
+        <select value={year} onChange={e=>setYear(Number(e.target.value))} style={{ padding:"6px 10px", borderRadius:7, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, color:C.text }}>
+          {[yr-1,yr,yr+1].map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {/* Month selector + mini bars */}
+      <Card style={{ padding:"16px 20px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
+          {arM.map((m,i)=>{
+            const md = annual ? (annual as any[])[i] : null;
+            const rev = md?.revenue||0, exp = md?.expenses||0, pft = md?.profit||0;
+            const h = maxVal>0?Math.max(4,(rev/maxVal)*60):4;
+            const isActive = selMonth===i+1;
+            return (
+              <div key={i} onClick={()=>setSelMonth(i+1)}
+                style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, cursor:"pointer", flexShrink:0, minWidth:52,
+                  padding:"8px 6px", borderRadius:10,
+                  background:isActive?C.primaryLight:"transparent",
+                  border:`1.5px solid ${isActive?C.primary:C.border}`,
+                  transition:"all 0.15s" }}>
+                <div style={{ display:"flex", gap:2, alignItems:"flex-end", height:60 }}>
+                  <div style={{ width:7, background:C.primary, borderRadius:"2px 2px 0 0", height:`${Math.max(4,(rev/maxVal)*56)}px`, opacity:0.8 }}/>
+                  <div style={{ width:7, background:C.amber,   borderRadius:"2px 2px 0 0", height:`${Math.max(4,(exp/maxVal)*56)}px`, opacity:0.8 }}/>
+                  <div style={{ width:7, background:pft>=0?C.green:C.red, borderRadius:"2px 2px 0 0", height:`${Math.max(4,(Math.abs(pft)/maxVal)*56)}px`, opacity:0.9 }}/>
+                </div>
+                <span style={{ fontSize:10, fontWeight:isActive?800:400, color:isActive?C.primary:C.textSec }}>{m.slice(0,3)}</span>
+                {rev>0 && <span style={{ fontSize:9, color:pft>=0?C.green:C.red }}>{fmtM(pft)}</span>}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Selected month detail */}
+      <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:12 }}>
+        <h3 style={{ fontSize:17, fontWeight:800, color:C.text, margin:0 }}>تفاصيل شهر {arM[selMonth-1]} {year}</h3>
+        {detail && <Badge label={detail.netProfit>=0?"✅ رابح":"❌ خاسر"} bg={detail.netProfit>=0?C.greenLight:C.redLight} color={detail.netProfit>=0?C.green:C.red}/>}
+      </div>
+
+      {isLoading ? <div style={{ textAlign:"center",padding:40 }}><Spinner/></div> : !detail ? <NoData/> : (
+        <>
+          {/* KPIs */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+            {[
+              {l:"الإيرادات",    v:detail.revenue,    c:C.primary, bg:C.primaryLight, icon:"💰"},
+              {l:"تكلفة المبيعات",v:detail.cogs,      c:C.amber,   bg:C.amberLight,   icon:"📦"},
+              {l:"المصروفات",   v:detail.expenses,   c:C.red,     bg:C.redLight,     icon:"💸"},
+              {l:"صافي الربح",  v:detail.netProfit,  c:detail.netProfit>=0?C.green:C.red, bg:detail.netProfit>=0?C.greenLight:C.redLight, icon:detail.netProfit>=0?"📈":"📉"},
+            ].map((s,i)=>(
+              <KPICard key={i} label={s.l} value={fmtM(s.v)} icon={s.icon} color={s.c} bg={s.bg}
+                sub={detail.revenue>0?`${(Math.abs(s.v)/detail.revenue*100).toFixed(1)}% من الإيرادات`:""}/>
+            ))}
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+            {/* Revenue detail */}
+            <Card style={{ overflow:"hidden" }}>
+              <div style={{ padding:"12px 16px", background:C.primaryLight, borderBottom:`1px solid ${C.primarySoft}` }}>
+                <p style={{ fontWeight:800, fontSize:13, color:C.primary, margin:0 }}>
+                  💰 تفصيل الإيرادات — {fmtM(detail.revenue)}
+                </p>
+              </div>
+              {(detail.revenueDetail||[]).length === 0 ? <div style={{ padding:20, textAlign:"center", color:C.muted, fontSize:12 }}>لا توجد إيرادات هذا الشهر</div> : (
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr style={{ background:"#F8FAFF" }}>
+                    <th style={{ padding:"8px 12px", textAlign:"right", color:C.muted, fontWeight:600 }}>الحساب</th>
+                    <th style={{ padding:"8px 12px", textAlign:"right", color:C.muted, fontWeight:600 }}>الشريك</th>
+                    <th style={{ padding:"8px 12px", textAlign:"center", color:C.muted, fontWeight:600 }}>المبلغ</th>
+                  </tr></thead>
+                  <tbody>
+                    {(detail.revenueDetail as any[]).filter((r:any)=>Number(r.amount)>0).map((r:any,i:number)=>(
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                        <td style={{ padding:"7px 12px", color:C.text }}><span style={{ color:C.muted,fontSize:10 }}>{r.account_code} </span>{r.account_name}</td>
+                        <td style={{ padding:"7px 12px", color:C.textSec, fontSize:10 }}>{r.partner_name||"—"}</td>
+                        <td style={{ padding:"7px 12px", textAlign:"center", color:C.primary, fontWeight:700 }}>{fmt(Number(r.amount))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+
+            {/* Expense detail */}
+            <Card style={{ overflow:"hidden" }}>
+              <div style={{ padding:"12px 16px", background:C.redLight, borderBottom:`1px solid #FECACA` }}>
+                <p style={{ fontWeight:800, fontSize:13, color:C.red, margin:0 }}>
+                  💸 تفصيل المصروفات — {fmtM(detail.expenses+detail.cogs)}
+                </p>
+              </div>
+              {(detail.expenseDetail||[]).length === 0 ? <div style={{ padding:20, textAlign:"center", color:C.muted, fontSize:12 }}>لا توجد مصروفات هذا الشهر</div> : (
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr style={{ background:"#FFF5F5" }}>
+                    <th style={{ padding:"8px 12px", textAlign:"right", color:C.muted, fontWeight:600 }}>الحساب</th>
+                    <th style={{ padding:"8px 12px", textAlign:"right", color:C.muted, fontWeight:600 }}>الشريك</th>
+                    <th style={{ padding:"8px 12px", textAlign:"center", color:C.muted, fontWeight:600 }}>المبلغ</th>
+                  </tr></thead>
+                  <tbody>
+                    {(detail.expenseDetail as any[]).filter((r:any)=>Number(r.amount)>0).map((r:any,i:number)=>(
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#FFF8F8" }}>
+                        <td style={{ padding:"7px 12px", color:C.text }}><span style={{ color:C.muted,fontSize:10 }}>{r.account_code} </span>{r.account_name}</td>
+                        <td style={{ padding:"7px 12px", color:C.textSec, fontSize:10 }}>{r.partner_name||"—"}</td>
+                        <td style={{ padding:"7px 12px", textAlign:"center", color:C.red, fontWeight:700 }}>{fmt(Number(r.amount))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🏢 مقارنة الشركات — على مستوى المجموعة
+// ══════════════════════════════════════════════════════════════════════════════
+function MultiCompanyPage({ currentUser }:any) {
+  const yr = new Date().getFullYear();
+  const [year, setYear]         = useState(yr);
+  const [selView, setSelView]   = useState<"summary"|"monthly"|"ratios">("summary");
+  const [selCos, setSelCos]     = useState<number[]>([]);
+  const { data:companies }      = trpc.company.list.useQuery();
+
+  // Auto-select all companies on load
+  useEffect(()=>{
+    if (companies?.length && selCos.length===0) {
+      setSelCos(companies.map((c:any)=>c.id));
+    }
+  },[companies]);
+
+  const { data:summary, isLoading:sl } = (trpc as any).journal.multiCompanySummary.useQuery(
+    { companyIds:selCos, year }, { enabled:selCos.length>0 }
+  );
+  const { data:monthly, isLoading:ml } = (trpc as any).journal.multiCompanyMonthly.useQuery(
+    { companyIds:selCos, year }, { enabled:selCos.length>0 && selView==="monthly" }
+  );
+
+  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  const COLORS = [C.primary, C.teal, C.amber, C.purple, C.red, C.green, "#06B6D4", "#F97316"];
+
+  const maxRev = summary ? Math.max(...(summary as any[]).map((s:any)=>s.revenue||0), 1) : 1;
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+        <PageTitle title="🏢 مقارنة الشركات" sub="تحليل الأداء عبر جميع الشركات"/>
+        <div style={{ display:"flex", gap:8 }}>
+          <select value={year} onChange={e=>setYear(Number(e.target.value))} style={{ padding:"7px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, color:C.text }}>
+            {[yr-1,yr,yr+1].map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Company selector */}
+      {(companies||[]).length > 0 && (
+        <Card style={{ padding:"12px 16px", marginBottom:14 }}>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <span style={{ fontSize:12, color:C.muted, fontWeight:600 }}>الشركات:</span>
+            {(companies as any[]).map((co:any,i:number)=>(
+              <label key={co.id} onClick={()=>setSelCos(s=>s.includes(co.id)?s.filter(x=>x!==co.id):[...s,co.id])}
+                style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 12px", borderRadius:20, cursor:"pointer",
+                  background:selCos.includes(co.id)?`${COLORS[i%8]}20`:C.bg,
+                  border:`1.5px solid ${selCos.includes(co.id)?COLORS[i%8]:C.border}` }}>
+                <div style={{ width:10,height:10,borderRadius:"50%",background:selCos.includes(co.id)?COLORS[i%8]:"#D1D5DB" }}/>
+                <span style={{ fontSize:12, fontWeight:600, color:selCos.includes(co.id)?COLORS[i%8]:C.textSec }}>{co.name}</span>
+              </label>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* View tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+        {[{k:"summary",l:"📊 ملخص سنوي"},{k:"monthly",l:"📅 مقارنة شهرية"},{k:"ratios",l:"📉 النسب المالية"}].map(v=>(
+          <button key={v.k} onClick={()=>setSelView(v.k as any)}
+            style={{ padding:"8px 18px", borderRadius:9, border:`1.5px solid ${selView===v.k?C.primary:C.border}`, background:selView===v.k?C.primary:"#fff", color:selView===v.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:selView===v.k?700:400 }}>
+            {v.l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── SUMMARY VIEW ── */}
+      {selView==="summary" && (
+        <>
+          {sl ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> : !summary?.length ? <NoData text="لا توجد بيانات — قم بالمزامنة"/> : (
+            <>
+              {/* Revenue comparison bars */}
+              <Card style={{ padding:"20px", marginBottom:14 }}>
+                <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 16px" }}>💰 مقارنة الإيرادات السنوية</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {(summary as any[]).sort((a:any,b:any)=>b.revenue-a.revenue).map((co:any,i:number)=>(
+                    <div key={co.companyId}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                        <span style={{ fontSize:12, color:C.text, fontWeight:600 }}>{co.companyName}</span>
+                        <div style={{ display:"flex", gap:12 }}>
+                          <span style={{ fontSize:12, color:C.primary }}>{fmtM(co.revenue)}</span>
+                          <Badge label={co.netProfit>=0?`ربح: ${fmtM(co.netProfit)}`:`خسارة: (${fmtM(Math.abs(co.netProfit))})`} bg={co.netProfit>=0?C.greenLight:C.redLight} color={co.netProfit>=0?C.green:C.red}/>
+                        </div>
+                      </div>
+                      <div style={{ background:"#F1F5F9", borderRadius:6, height:10, overflow:"hidden", position:"relative" }}>
+                        <div style={{ width:`${(co.revenue/maxRev)*100}%`, height:"100%", background:COLORS[i%8], borderRadius:6, transition:"width 0.5s" }}/>
+                        <div style={{ position:"absolute", top:0, right:`${100-(co.revenue/maxRev)*100*(co.expenses/co.revenue)}%`, width:`${(co.expenses/co.revenue)*(co.revenue/maxRev)*100}%`, height:"100%", background:`${COLORS[i%8]}60` }}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Summary table */}
+              <Card style={{ overflow:"hidden" }}>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:700 }}>
+                    <thead>
+                      <tr style={{ background:C.primaryLight }}>
+                        {["الشركة","الإيرادات","تكلفة المبيعات","مجمل الربح","هامش إجمالي%","المصروفات","صافي الربح","هامش صافي%","ROA","ROE"].map(h=>(
+                          <th key={h} style={{ padding:"10px 10px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap", fontSize:10 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(summary as any[]).map((co:any,i:number)=>(
+                        <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                          <td style={{ padding:"9px 10px" }}>
+                            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                              <div style={{ width:8,height:8,borderRadius:"50%",background:COLORS[i%8],flexShrink:0 }}/>
+                              <span style={{ color:C.text, fontWeight:600, fontSize:11 }}>{co.companyName}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding:"9px 10px", color:C.primary, fontWeight:700 }}>{fmtM(co.revenue)}</td>
+                          <td style={{ padding:"9px 10px", color:C.amber }}>{fmtM(co.cogs)}</td>
+                          <td style={{ padding:"9px 10px", color:C.teal, fontWeight:600 }}>{fmtM(co.grossProfit)}</td>
+                          <td style={{ padding:"9px 10px" }}><Badge label={`${co.grossMargin.toFixed(1)}%`} bg={co.grossMargin>30?C.greenLight:C.amberLight} color={co.grossMargin>30?C.green:C.amber}/></td>
+                          <td style={{ padding:"9px 10px", color:C.red }}>{fmtM(co.expenses)}</td>
+                          <td style={{ padding:"9px 10px", fontWeight:800, color:co.netProfit>=0?C.green:C.red }}>{co.netProfit>=0?fmtM(co.netProfit):`(${fmtM(Math.abs(co.netProfit))})`}</td>
+                          <td style={{ padding:"9px 10px" }}><Badge label={`${co.netMargin.toFixed(1)}%`} bg={co.netMargin>10?C.greenLight:C.redLight} color={co.netMargin>10?C.green:C.red}/></td>
+                          <td style={{ padding:"9px 10px" }}><Badge label={`${co.roa.toFixed(1)}%`} bg={co.roa>5?C.greenLight:"#F1F5F9"} color={co.roa>5?C.green:C.muted}/></td>
+                          <td style={{ padding:"9px 10px" }}><Badge label={`${co.roe.toFixed(1)}%`} bg={co.roe>10?C.greenLight:"#F1F5F9"} color={co.roe>10?C.green:C.muted}/></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {(summary as any[]).length > 1 && (
+                      <tfoot>
+                        <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+                          <td style={{ padding:"10px", fontWeight:800, color:C.primary }}>المجموع</td>
+                          {["revenue","cogs","grossProfit","","expenses","netProfit","","",""].map((f,i)=>(
+                            <td key={i} style={{ padding:"10px", fontWeight:800, color:C.primary }}>
+                              {f ? fmtM((summary as any[]).reduce((s:number,c:any)=>s+(c[f]||0),0)) : ""}
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </Card>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── MONTHLY VIEW ── */}
+      {selView==="monthly" && (
+        <>
+          {ml ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> : !monthly ? <NoData/> : (
+            <Card style={{ overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:900 }}>
+                  <thead>
+                    <tr style={{ background:C.primaryLight }}>
+                      <th style={{ padding:"10px 14px", textAlign:"right", color:C.primary, fontWeight:700, whiteSpace:"nowrap" }}>الشركة / الشهر</th>
+                      {arM.map(m=><th key={m} style={{ padding:"10px 8px", textAlign:"center", color:C.primary, fontWeight:700, fontSize:10, whiteSpace:"nowrap" }}>{m.slice(0,3)}</th>)}
+                      <th style={{ padding:"10px 10px", textAlign:"center", color:C.primary, fontWeight:700 }}>المجموع</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selCos.map((cid,ci)=>{
+                      const coData = monthly[cid] || [];
+                      const coName = (companies as any[])?.find(c=>c.id===cid)?.name || `شركة ${cid}`;
+                      const totalRev = coData.reduce((s:number,m:any)=>s+(m.revenue||0),0);
+                      const totalPft = coData.reduce((s:number,m:any)=>s+(m.profit||0),0);
+                      return [
+                        // Revenue row
+                        <tr key={`${cid}-rev`} style={{ borderBottom:`1px solid ${C.border}`, background:ci%2===0?"#EFF6FF":"#F0FDFA" }}>
+                          <td style={{ padding:"8px 14px", fontWeight:700, color:COLORS[ci%8] }}>
+                            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                              <div style={{ width:8,height:8,borderRadius:"50%",background:COLORS[ci%8] }}/>
+                              {coName} — إيرادات
+                            </div>
+                          </td>
+                          {coData.map((m:any,i:number)=>(
+                            <td key={i} style={{ padding:"8px 6px", textAlign:"center", color:C.primary, fontWeight:(m.revenue||0)>0?600:400, fontSize:10 }}>
+                              {(m.revenue||0)>0?fmtM(m.revenue):"—"}
+                            </td>
+                          ))}
+                          <td style={{ padding:"8px 10px", textAlign:"center", color:C.primary, fontWeight:800 }}>{fmtM(totalRev)}</td>
+                        </tr>,
+                        // Profit row
+                        <tr key={`${cid}-pft`} style={{ borderBottom:`2px solid ${C.border}` }}>
+                          <td style={{ padding:"6px 14px 8px 30px", color:C.textSec, fontSize:10 }}>ربح/خسارة</td>
+                          {coData.map((m:any,i:number)=>(
+                            <td key={i} style={{ padding:"6px 6px 8px", textAlign:"center", fontSize:10,
+                              color:(m.profit||0)>=0?C.green:C.red, fontWeight:(m.profit||0)!==0?600:400 }}>
+                              {(m.profit||0)!==0?((m.profit||0)>=0?"+":"")+fmtM(m.profit):"—"}
+                            </td>
+                          ))}
+                          <td style={{ padding:"6px 10px 8px", textAlign:"center", color:totalPft>=0?C.green:C.red, fontWeight:800, fontSize:11 }}>
+                            {totalPft>=0?fmtM(totalPft):`(${fmtM(Math.abs(totalPft))})`}
+                          </td>
+                        </tr>
+                      ];
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* ── RATIOS VIEW ── */}
+      {selView==="ratios" && (
+        <>
+          {sl ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> : !summary?.length ? <NoData/> : (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:14 }}>
+              {(summary as any[]).map((co:any,i:number)=>(
+                <Card key={co.companyId} style={{ padding:"18px 20px", borderTop:`3px solid ${COLORS[i%8]}` }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:14 }}>
+                    <div style={{ width:36,height:36,borderRadius:10,background:`${COLORS[i%8]}20`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18 }}>🏢</div>
+                    <div>
+                      <p style={{ fontWeight:800, color:C.text, margin:0, fontSize:13 }}>{co.companyName}</p>
+                      <Badge label={co.netProfit>=0?"✅ رابحة":"❌ خاسرة"} bg={co.netProfit>=0?C.greenLight:C.redLight} color={co.netProfit>=0?C.green:C.red}/>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {[
+                      {l:"الإيرادات",         v:fmtM(co.revenue), c:COLORS[i%8]},
+                      {l:"صافي الربح",        v:co.netProfit>=0?fmtM(co.netProfit):`(${fmtM(Math.abs(co.netProfit))})`, c:co.netProfit>=0?C.green:C.red},
+                      {l:"هامش الربح الإجمالي",v:`${co.grossMargin.toFixed(1)}%`, c:co.grossMargin>30?C.green:C.amber},
+                      {l:"هامش الربح الصافي", v:`${co.netMargin.toFixed(1)}%`, c:co.netMargin>10?C.green:C.red},
+                      {l:"العائد على الأصول ROA",v:`${co.roa.toFixed(1)}%`, c:co.roa>5?C.green:C.amber},
+                      {l:"العائد على الملكية ROE",v:`${co.roe.toFixed(1)}%`, c:co.roe>10?C.green:C.amber},
+                    ].map((r,j)=>(
+                      <div key={j} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:j<5?`1px solid ${C.border}`:"none" }}>
+                        <span style={{ fontSize:11, color:C.textSec }}>{r.l}</span>
+                        <span style={{ fontSize:12, fontWeight:700, color:r.c }}>{r.v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
@@ -2623,6 +3004,8 @@ function PeriodsComparePage({ companyId }:any) {
       case "cashflow":          return <CashFlowPage companyId={companyId}/>;
       case "costs":             return <CostAnalysisPage companyId={companyId}/>;
       case "compare":           return <PeriodsComparePage companyId={companyId}/>;
+      case "monthly-detail":    return <MonthlyDetailPage companyId={companyId} co={co}/>;
+      case "multi-company":     return <MultiCompanyPage currentUser={user}/>;
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;
       case "chatbot":           return <ChatbotPage companyId={companyId} co={co}/>;
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;
