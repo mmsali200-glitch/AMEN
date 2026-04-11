@@ -268,3 +268,34 @@ app.get("/diagnose/:companyId", async (req, res) => {
     res.json(report);
   } catch(e:any) { res.json({ error: e.message, stack: e.stack?.slice(0,300) }); }
 });
+
+// ── Fix Lines: fill account data from accounts_coa ───────────────────────────
+app.post("/fix-lines/:companyId", async (req, res) => {
+  try {
+    const { createClient } = await import("@libsql/client");
+    const path2 = await import("path");
+    const { fileURLToPath: ftu } = await import("url");
+    const __d = path2.dirname(ftu(import.meta.url));
+    const client = createClient({ url: `file:${path2.join(__d, "..", "data", "cfo.db")}` });
+    const cid = parseInt(req.params.companyId) || 0;
+
+    // Check what we have
+    const sample = await client.execute(`
+      SELECT id, account_code, account_name, account_type, debit, credit
+      FROM journal_entry_lines WHERE company_id=${cid} LIMIT 5`);
+    
+    const noCode = await client.execute(`
+      SELECT count(*) as n FROM journal_entry_lines 
+      WHERE company_id=${cid} AND (account_code IS NULL OR account_code='' OR account_code='0000')`);
+    
+    const noType = await client.execute(`
+      SELECT count(*) as n FROM journal_entry_lines 
+      WHERE company_id=${cid} AND (account_type IS NULL OR account_type='' OR account_type='other')`);
+
+    res.json({
+      sample_lines: sample.rows,
+      no_account_code: noCode.rows[0]?.n || 0,
+      no_account_type: noType.rows[0]?.n || 0,
+    });
+  } catch(e:any) { res.json({ error: e.message }); }
+});

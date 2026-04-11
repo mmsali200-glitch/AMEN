@@ -1948,13 +1948,25 @@ function EntryLinesSection({ entryId, companyId, entry }:any) {
               const tc = typeColors[l.accountType] || {bg:"#F8FAFC",c:"#64748B"};
               return (
                 <tr key={i} style={{ borderBottom:`1px solid #F1F5F9`, background:i%2===0?"#fff":"#FAFCFF" }}>
-                  <td style={{ padding:"7px 10px", color:C.text, fontWeight:500, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.accountName||"—"}</td>
-                  <td style={{ padding:"7px 10px", fontFamily:"monospace", color:C.primary, fontSize:11 }}>{l.accountCode}</td>
-                  <td style={{ padding:"7px 10px" }}>
-                    <Badge label={typeLabels[l.accountType]||l.accountType||"—"} bg={tc.bg} color={tc.c}/>
+                  <td style={{ padding:"7px 10px", color:C.text, fontWeight:500, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.account_name||l.accountName||"—"}
                   </td>
-                  <td style={{ padding:"7px 10px", color:C.textSec, maxWidth:120, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.partnerName||"—"}</td>
-                  <td style={{ padding:"7px 10px", color:C.muted, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{l.label||"—"}</td>
+                  <td style={{ padding:"7px 10px", fontFamily:"monospace", color:C.primary, fontSize:11 }}>
+                    {l.account_code||l.accountCode||"—"}
+                  </td>
+                  <td style={{ padding:"7px 10px" }}>
+                    {(() => {
+                      const at = l.account_type||l.accountType||"";
+                      const tc2 = typeColors[at]||{bg:"#F8FAFC",c:"#64748B"};
+                      return <Badge label={typeLabels[at]||at||"—"} bg={tc2.bg} color={tc2.c}/>;
+                    })()}
+                  </td>
+                  <td style={{ padding:"7px 10px", color:C.textSec, maxWidth:120, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.partner_name||l.partnerName||"—"}
+                  </td>
+                  <td style={{ padding:"7px 10px", color:C.muted, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.label||"—"}
+                  </td>
                   <td style={{ padding:"7px 10px", color:C.teal, fontWeight:(l.debit||0)>0?700:400, textAlign:"left", whiteSpace:"nowrap" }}>
                     {(l.debit||0)>0 ? fmt(l.debit) : "—"}
                   </td>

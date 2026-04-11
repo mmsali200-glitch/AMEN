@@ -603,11 +603,14 @@ const odooRouter = router({
             if (!entryId) continue;
 
             // استخراج الحساب
-            const accId   = Array.isArray(line.account_id) ? Number(line.account_id[0]) : 0;
+            // استخراج بيانات الحساب
+            const accId   = Array.isArray(line.account_id) ? Number(line.account_id[0]) : Number(line.account_id||0);
             const accRaw  = Array.isArray(line.account_id) ? String(line.account_id[1]||"") : "";
-            const accCode = (coaMap[accId]?.code) || accRaw.split(" ")[0] || "0000";
-            const accName = (coaMap[accId]?.name) || accRaw.replace(/^\S+\s+/,"") || "";
-            const accType = (coaMap[accId]?.cfoType) || odooTypeToCfoType("", accCode, accName);
+            // الأولوية: COA المحلي → تحليل اسم الحساب من Odoo → كود افتراضي
+            const fromCoa = coaMap[accId];
+            const accCode = fromCoa?.code || accRaw.split(" ")[0] || String(accId||"0000");
+            const accName = fromCoa?.name || accRaw.replace(/^\S+\s+/,"") || accRaw || "";
+            const accType = fromCoa?.cfoType || odooTypeToCfoType("", accCode, accName);
 
             // التاريخ
             const parentDate = moves.find((m:any)=>Number(m.id)===moveId)?.date;
@@ -922,18 +925,34 @@ const journalRouter = router({
       return { openingBalance:opBalance, lines, finalBalance:balance };
     }),
 
-  // سطور قيد واحد
+  // سطور قيد واحد — مع جلب بيانات الحساب من COA إذا كانت فارغة
   getEntryLines: protectedProcedure
     .input(z.object({ entryId:z.number(), companyId:z.number() }))
     .query(async ({ input }) => {
       const res = await db.run(sql`
-        SELECT id, account_code, account_name, account_type,
-               partner_name, label, debit, credit, date
-        FROM journal_entry_lines
-        WHERE journal_entry_id=${input.entryId}
-          AND company_id=${input.companyId}
-        ORDER BY id`);
-      return { lines:(res as any).rows||[] };
+        SELECT
+          jl.id,
+          COALESCE(NULLIF(jl.account_code,''), NULLIF(jl.account_code,'0000'), coa.code, '—') as account_code,
+          COALESCE(NULLIF(jl.account_name,''), coa.name, '—') as account_name,
+          COALESCE(NULLIF(jl.account_type,''), NULLIF(jl.account_type,'other'), coa.cfo_type, 'other') as account_type,
+          COALESCE(jl.partner_name, '') as partner_name,
+          COALESCE(jl.label, '') as label,
+          jl.debit, jl.credit, jl.date
+        FROM journal_entry_lines jl
+        LEFT JOIN accounts_coa coa ON coa.company_id=jl.company_id AND coa.code=jl.account_code
+        WHERE jl.journal_entry_id=${input.entryId}
+          AND jl.company_id=${input.companyId}
+        ORDER BY jl.id`);
+
+      // تصنيف أي حساب لم يُصنَّف
+      const lines = ((res as any).rows||[]).map((l:any)=>({
+        ...l,
+        account_type: l.account_type && l.account_type !== 'other'
+          ? l.account_type
+          : classifyAccount(String(l.account_code||''), String(l.account_name||'')),
+      }));
+
+      return { lines };
     }),
 
   // الحسابات المتاحة
