@@ -187,3 +187,84 @@ app.post("/fix/:companyId", async (req, res) => {
     res.json({ fixed_dates: fix1.rowsAffected||0, fixed_types: fixed2, message:"✅ تم الإصلاح" });
   } catch(e:any) { res.json({ error: e.message }); }
 });
+
+// ── Deep Sync Diagnostic ─────────────────────────────────────────────────────
+app.get("/diagnose/:companyId", async (req, res) => {
+  try {
+    const { createClient } = await import("@libsql/client");
+    const path2 = await import("path");
+    const { fileURLToPath: ftu } = await import("url");
+    const __d = path2.dirname(ftu(import.meta.url));
+    const client = createClient({ url: `file:${path2.join(__d, "..", "data", "cfo.db")}` });
+    const cid = parseInt(req.params.companyId) || 0;
+    const report: any = { company_id: cid, steps: [] };
+
+    const step = (name: string, data: any) => {
+      report.steps.push({ name, ...data });
+      console.log(`[DIAG] ${name}:`, JSON.stringify(data).slice(0,150));
+    };
+
+    // Step 1: company exists?
+    const co = await client.execute(`SELECT * FROM companies WHERE id=${cid} LIMIT 1`);
+    step("1_company", { found: co.rows.length > 0, data: co.rows[0] || null });
+    if (!co.rows.length) { return res.json(report); }
+
+    // Step 2: odoo config exists?
+    const cfg = await client.execute(`SELECT url,database,odoo_company_id,odoo_company_name,is_connected FROM odoo_configs WHERE company_id=${cid} LIMIT 1`).catch(()=>({rows:[]}));
+    step("2_odoo_config", { found: cfg.rows.length > 0, data: cfg.rows[0] || null });
+    if (!cfg.rows.length) { return res.json(report); }
+
+    // Step 3: journal_entries count
+    const je = await client.execute(`SELECT count(*) as n FROM journal_entries WHERE company_id=${cid}`);
+    step("3_journal_entries", { count: je.rows[0]?.n || 0 });
+
+    // Step 4: journal_entry_lines count
+    const jl = await client.execute(`SELECT count(*) as n FROM journal_entry_lines WHERE company_id=${cid}`);
+    step("4_journal_lines", { count: jl.rows[0]?.n || 0, problem: Number(jl.rows[0]?.n||0)===0 ? "LINES EMPTY!" : "OK" });
+
+    // Step 5: sample entries (do they have odoo_move_id?)
+    const sample = await client.execute(`SELECT id, odoo_move_id, name, date, total_debit FROM journal_entries WHERE company_id=${cid} LIMIT 3`);
+    step("5_sample_entries", { rows: sample.rows });
+
+    // Step 6: accounts_coa
+    const coa = await client.execute(`SELECT count(*) as n FROM accounts_coa WHERE company_id=${cid}`).catch(()=>({rows:[{n:"TABLE NOT FOUND"}]}));
+    step("6_accounts_coa", { count: coa.rows[0]?.n });
+
+    // Step 7: try live Odoo test
+    if (cfg.rows.length && cfg.rows[0].url) {
+      const { OdooConnector } = await import("./odoo.js");
+      const cfgRow = cfg.rows[0] as any;
+      const dbRows = await client.execute(`SELECT username, password FROM odoo_configs WHERE company_id=${cid} LIMIT 1`);
+      const dbRow = dbRows.rows[0] as any;
+      try {
+        const conn = new OdooConnector(cfgRow.url, cfgRow.database, dbRow.username, dbRow.password);
+        await conn.authenticate();
+        step("7_odoo_auth", { success: true, uid: conn.uid, version: conn.getVersionString() });
+
+        // Get one journal entry and its lines
+        const odooCompanyId = Number(cfgRow.odoo_company_id) || 1;
+        const moves = await conn.getJournalEntries(odooCompanyId, "2024-01-01", "2024-12-31", 3, 0);
+        step("8_odoo_moves_sample", { count: moves.length, sample: moves.slice(0,2).map((m:any)=>({id:m.id,name:m.name,date:m.date})) });
+
+        if (moves.length > 0) {
+          const lines = await conn.getJournalLines([moves[0].id]);
+          step("9_odoo_lines_sample", {
+            move_id: moves[0].id,
+            lines_count: lines.length,
+            sample: lines.slice(0,2).map((l:any)=>({
+              account: l.account_id,
+              debit: l.debit,
+              credit: l.credit,
+              date: l.date,
+              move_id: l.move_id
+            }))
+          });
+        }
+      } catch(e:any) {
+        step("7_odoo_auth", { success: false, error: e.message });
+      }
+    }
+
+    res.json(report);
+  } catch(e:any) { res.json({ error: e.message, stack: e.stack?.slice(0,300) }); }
+});
