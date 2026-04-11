@@ -164,11 +164,12 @@ async function setupTables(db: Client): Promise<void> {
 // الدالة الرئيسية للمزامنة
 // ══════════════════════════════════════════════════════════════════════════════
 export async function runFullSync(params: {
-  companyId:     number;
-  odooCompanyId: number;
-  dateFrom:      string;
-  dateTo:        string;
-  onProgress?:   (msg: string) => void;
+  companyId:      number;
+  odooCompanyId:  number;
+  dateFrom:       string;
+  dateTo:         string;
+  syncType?:      "full" | "incremental";
+  onProgress?:    (msg: string) => void;
 }): Promise<{ entries: number; lines: number; coa: number; partners: number; openingLines: number }> {
 
   const db  = getDbClient();

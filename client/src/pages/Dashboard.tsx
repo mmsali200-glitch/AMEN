@@ -44,6 +44,7 @@ const NAV = [
   { s:"الذكاء AI",        items:[
     {id:"advisor",         label:"المستشار AI",            icon:"🤖"},
     {id:"chatbot",         label:"شات بوت مالي",          icon:"💬"},
+    {id:"export",          label:"تصدير التقارير",         icon:"📤"},
   ]},
   { s:"الإدارة",          items:[
     {id:"holding",         label:"الشركات القابضة",       icon:"🏛️"},
@@ -3358,6 +3359,469 @@ function AnalyticCentersPage({ companyId, co }:any) {
 }
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 تقرير الشيخوخة (Aging Report)
+// ══════════════════════════════════════════════════════════════════════════════
+function AgingReportPage({ companyId, co }:any) {
+  const [asOf, setAsOf] = useState(`${new Date().getFullYear()}-12-31`);
+  const [type, setType] = useState("receivable");
+  const { data, isLoading } = (trpc as any).journal.agingReport.useQuery({ companyId, asOf, type }, { enabled:!!companyId });
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const cols = [
+    {k:"current",  l:"جاري (0-30)",  c:C.green},
+    {k:"d30",      l:"30-60 يوم",    c:C.teal},
+    {k:"d60",      l:"60-90 يوم",    c:C.amber},
+    {k:"d90",      l:"90-180 يوم",   c:C.red},
+    {k:"d90plus",  l:"+180 يوم",     c:"#7F1D1D"},
+  ];
+  const partners: any[] = data?.partners || [];
+  const totals: any = data?.totals || {};
+  const grandTotal = Math.abs(totals.total || 0);
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+        <PageTitle title="📅 تقرير الشيخوخة (Aging)" sub={co?.name}/>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", border:`1px solid ${C.border}` }}>
+            {[{k:"receivable",l:"مدينون"},{k:"payable",l:"دائنون"}].map(t=>(
+              <button key={t.k} onClick={()=>setType(t.k)}
+                style={{ padding:"7px 16px", border:"none", background:type===t.k?C.primary:"#fff", color:type===t.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:type===t.k?700:400 }}>
+                {t.l}
+              </button>
+            ))}
+          </div>
+          <input type="date" value={asOf} onChange={e=>setAsOf(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+        </div>
+      </div>
+
+      {/* Summary KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:16 }}>
+        {cols.map(col=>(
+          <Card key={col.k} style={{ padding:"12px 14px" }}>
+            <p style={{ fontSize:10, color:C.muted, margin:"0 0 4px" }}>{col.l}</p>
+            <p style={{ fontSize:16, fontWeight:800, color:col.c, margin:"0 0 3px" }}>{fmt(Math.abs(totals[col.k]||0))}</p>
+            <div style={{ background:"#F1F5F9", borderRadius:4, height:5, overflow:"hidden" }}>
+              <div style={{ width:`${grandTotal>0?Math.abs((totals[col.k]||0))/grandTotal*100:0}%`, height:"100%", background:col.c, borderRadius:4 }}/>
+            </div>
+            <p style={{ fontSize:9, color:C.muted, margin:"3px 0 0" }}>{grandTotal>0?(Math.abs((totals[col.k]||0))/grandTotal*100).toFixed(1):0}%</p>
+          </Card>
+        ))}
+      </div>
+
+      {isLoading ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> : !partners.length ? <NoData text="لا توجد أرصدة"/> : (
+        <Card style={{ overflow:"hidden" }}>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:700 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  <th style={{ padding:"10px 14px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}` }}>الشريك</th>
+                  {cols.map(col=><th key={col.k} style={{ padding:"10px 10px", textAlign:"center", color:col.c, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap" }}>{col.l}</th>)}
+                  <th style={{ padding:"10px 10px", textAlign:"center", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}` }}>الإجمالي</th>
+                  <th style={{ padding:"10px 10px", textAlign:"center", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, minWidth:80 }}>التوزيع</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partners.map((p:any,i:number)=>{
+                  const tot = Math.abs(p.total);
+                  const risk = (Math.abs(p.d90)+Math.abs(p.d90plus))/tot*100;
+                  return (
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                      <td style={{ padding:"9px 14px", color:C.text, fontWeight:600 }}>{p.name}</td>
+                      {cols.map(col=>(
+                        <td key={col.k} style={{ padding:"9px 10px", textAlign:"center", color:Math.abs(p[col.k])>0?col.c:C.muted }}>
+                          {Math.abs(p[col.k])>0?fmt(Math.abs(p[col.k])):"—"}
+                        </td>
+                      ))}
+                      <td style={{ padding:"9px 10px", textAlign:"center", fontWeight:800, color:risk>50?C.red:C.text }}>{fmt(tot)}</td>
+                      <td style={{ padding:"9px 10px" }}>
+                        <div style={{ display:"flex", height:10, borderRadius:4, overflow:"hidden" }}>
+                          {cols.map(col=>{
+                            const w = tot>0?Math.abs(p[col.k])/tot*100:0;
+                            return w>0?<div key={col.k} style={{ width:`${w}%`, background:col.c, opacity:0.85 }}/>:null;
+                          })}
+                        </div>
+                        {risk>50&&<span style={{ fontSize:9, color:C.red }}>⚠️ {risk.toFixed(0)}% متأخر</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+                  <td style={{ padding:"10px 14px", fontWeight:800, color:C.primary }}>الإجمالي</td>
+                  {cols.map(col=><td key={col.k} style={{ padding:"10px", textAlign:"center", fontWeight:800, color:col.c }}>{fmt(Math.abs(totals[col.k]||0))}</td>)}
+                  <td style={{ padding:"10px", textAlign:"center", fontWeight:900, color:C.primary, fontSize:13 }}>{fmt(grandTotal)}</td>
+                  <td/>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🔬 DuPont Analysis + Altman Z-Score + Smart Alerts
+// ══════════════════════════════════════════════════════════════════════════════
+function AdvancedAnalysisPage({ companyId, co }:any) {
+  const yr = new Date().getFullYear();
+  const [year, setYear] = useState(yr);
+  const [tab, setTab]   = useState<"dupont"|"altman"|"alerts">("alerts");
+
+  const { data:dp, isLoading:dl } = (trpc as any).journal.dupont.useQuery({ companyId, year }, { enabled:!!companyId });
+  const { data:az, isLoading:al } = (trpc as any).journal.altmanZScore.useQuery({ companyId, year }, { enabled:!!companyId });
+  const { data:alerts, isLoading:sl } = (trpc as any).journal.smartAlerts.useQuery({ companyId, year }, { enabled:!!companyId });
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const alertColors: Record<string,{bg:string,c:string,border:string}> = {
+    danger:  {bg:C.redLight,   c:C.red,   border:"#FECACA"},
+    warning: {bg:C.amberLight, c:C.amber, border:"#FDE68A"},
+    success: {bg:C.greenLight, c:C.green, border:"#A7F3D0"},
+    info:    {bg:C.primaryLight,c:C.primary,border:C.primarySoft},
+  };
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="🔬 التحليل المالي المتقدم" sub={co?.name}/>
+        <select value={year} onChange={e=>setYear(Number(e.target.value))} style={{ padding:"7px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, color:C.text }}>
+          {[yr-1,yr,yr+1].map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      <div style={{ display:"flex", gap:6, marginBottom:16 }}>
+        {[{k:"alerts",l:"🚨 التنبيهات الذكية"},{k:"dupont",l:"🔬 DuPont ROE"},{k:"altman",l:"⚖️ Altman Z-Score"}].map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k as any)}
+            style={{ padding:"9px 20px", borderRadius:9, border:`1.5px solid ${tab===t.k?C.primary:C.border}`, background:tab===t.k?C.primary:"#fff", color:tab===t.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:tab===t.k?700:400 }}>
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── ALERTS ── */}
+      {tab==="alerts" && (
+        sl ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> :
+        !alerts ? <NoData/> : (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {(alerts.alerts as any[]).map((a:any,i:number)=>{
+              const ac = alertColors[a.level]||alertColors.info;
+              return (
+                <Card key={i} style={{ padding:"16px 20px", background:ac.bg, border:`1px solid ${ac.border}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
+                      <span style={{ fontSize:24, flexShrink:0 }}>{a.icon}</span>
+                      <div>
+                        <p style={{ fontWeight:800, color:ac.c, margin:"0 0 4px", fontSize:14 }}>{a.title}</p>
+                        <p style={{ color:C.textSec, fontSize:13, margin:0, lineHeight:1.6 }}>{a.msg}</p>
+                      </div>
+                    </div>
+                    <Badge label={a.value} bg={ac.border} color={ac.c}/>
+                  </div>
+                </Card>
+              );
+            })}
+
+            {/* Current metrics summary */}
+            {alerts.currentMetrics && (
+              <Card style={{ padding:"16px 20px" }}>
+                <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 12px" }}>📊 ملخص مالي — {year}</p>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+                  {[
+                    {l:"الإيرادات",   v:alerts.currentMetrics.rev,    c:C.primary},
+                    {l:"المصروفات",  v:alerts.currentMetrics.exp+alerts.currentMetrics.cogs, c:C.red},
+                    {l:"صافي الربح", v:alerts.currentMetrics.profit,  c:alerts.currentMetrics.profit>=0?C.green:C.red},
+                    {l:"الهامش",     v:alerts.currentMetrics.rev>0?`${((alerts.currentMetrics.profit/alerts.currentMetrics.rev)*100).toFixed(1)}%`:"—", c:C.teal},
+                  ].map((s,j)=>(
+                    <div key={j} style={{ padding:"10px 12px", borderRadius:8, background:C.bg, border:`1px solid ${C.border}` }}>
+                      <p style={{ fontSize:10, color:C.muted, margin:"0 0 4px" }}>{s.l}</p>
+                      <p style={{ fontSize:15, fontWeight:800, color:s.c, margin:0 }}>{typeof s.v==="number"?fmtM(s.v):s.v}</p>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        )
+      )}
+
+      {/* ── DUPONT ── */}
+      {tab==="dupont" && (
+        dl ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> :
+        !dp ? <NoData/> : (
+          <>
+            {/* ROE breakdown */}
+            <Card style={{ padding:"24px", marginBottom:14 }}>
+              <p style={{ fontWeight:800, fontSize:15, color:C.text, margin:"0 0 20px" }}>
+                🔬 تحليل DuPont — العائد على حقوق الملكية (ROE)
+              </p>
+              {/* Visual equation */}
+              <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", justifyContent:"center", marginBottom:24 }}>
+                {[
+                  {l:"هامش الربح",  v:`${dp.netMargin.toFixed(1)}%`,     c:C.teal,   sub:"صافي الربح ÷ إيرادات"},
+                  {l:"×"},
+                  {l:"دوران الأصول", v:`${dp.assetTurnover.toFixed(2)}x`, c:C.primary, sub:"إيرادات ÷ أصول"},
+                  {l:"×"},
+                  {l:"الرافعة المالية",v:`${dp.equityMultiplier.toFixed(2)}x`,c:C.purple,sub:"أصول ÷ حقوق ملكية"},
+                  {l:"="},
+                  {l:"ROE",          v:`${dp.roe.toFixed(1)}%`,            c:dp.roe>10?C.green:C.red, sub:"العائد على حقوق الملكية", big:true},
+                ].map((item:any,i:number)=>(
+                  item.l==="×"||item.l==="=" ? (
+                    <span key={i} style={{ fontSize:28, color:C.muted, fontWeight:300, margin:"0 4px" }}>{item.l}</span>
+                  ) : (
+                    <div key={i} style={{ padding:"16px 20px", borderRadius:12, background:item.big?item.c+"20":C.bg, border:`${item.big?"2px":"1px"} solid ${item.big?item.c:C.border}`, textAlign:"center", minWidth:120 }}>
+                      <p style={{ fontSize:11, color:C.textSec, margin:"0 0 6px" }}>{item.l}</p>
+                      <p style={{ fontSize:item.big?28:22, fontWeight:900, color:item.c, margin:"0 0 4px" }}>{item.v}</p>
+                      <p style={{ fontSize:10, color:C.muted, margin:0 }}>{item.sub}</p>
+                    </div>
+                  )
+                ))}
+              </div>
+
+              {/* Detailed metrics */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                {[
+                  {l:"الإيرادات",        v:fmtM(dp.revenue),         c:C.primary},
+                  {l:"صافي الربح",       v:fmtM(dp.netProfit),       c:dp.netProfit>=0?C.green:C.red},
+                  {l:"هامش إجمالي",      v:`${dp.grossMargin.toFixed(1)}%`, c:C.teal},
+                  {l:"هامش تشغيلي",      v:`${dp.operatingMargin.toFixed(1)}%`, c:C.amber},
+                  {l:"العائد على الأصول ROA", v:`${dp.roa.toFixed(1)}%`, c:C.purple},
+                  {l:"نسبة الديون",      v:`${dp.debtRatio.toFixed(1)}%`, c:dp.debtRatio<50?C.green:C.red},
+                  {l:"إجمالي الأصول",   v:fmtM(dp.assets),          c:C.primary},
+                  {l:"حقوق الملكية",    v:fmtM(dp.equity),          c:C.green},
+                  {l:"الالتزامات",      v:fmtM(dp.liab),            c:C.red},
+                ].map((s,j)=>(
+                  <div key={j} style={{ padding:"12px 14px", borderRadius:9, background:C.bg, border:`1px solid ${C.border}` }}>
+                    <p style={{ fontSize:11, color:C.muted, margin:"0 0 4px" }}>{s.l}</p>
+                    <p style={{ fontSize:16, fontWeight:800, color:s.c, margin:0 }}>{s.v}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </>
+        )
+      )}
+
+      {/* ── ALTMAN Z-SCORE ── */}
+      {tab==="altman" && (
+        al ? <div style={{ textAlign:"center",padding:60 }}><Spinner/></div> :
+        !az ? <NoData/> : (
+          <>
+            {/* Z-Score card */}
+            <Card style={{ padding:"24px", marginBottom:14, background:az.zone==="safe"?C.greenLight:az.zone==="grey"?C.amberLight:C.redLight, border:`2px solid ${az.zone==="safe"?"#A7F3D0":az.zone==="grey"?"#FDE68A":"#FECACA"}` }}>
+              <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+                <div style={{ textAlign:"center", padding:"20px 30px", borderRadius:14, background:"rgba(255,255,255,0.7)" }}>
+                  <p style={{ fontSize:11, color:C.textSec, margin:"0 0 6px" }}>Altman Z-Score</p>
+                  <p style={{ fontSize:48, fontWeight:900, color:az.zone==="safe"?C.green:az.zone==="grey"?C.amber:C.red, margin:"0 0 4px" }}>{az.z}</p>
+                  <p style={{ fontSize:16, fontWeight:700, color:az.zone==="safe"?C.green:az.zone==="grey"?C.amber:C.red, margin:0 }}>{az.zoneLabel}</p>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ position:"relative", height:20, background:"linear-gradient(to right,#FEE2E2 0%,#FEF3C7 35%,#D1FAE5 60%,#ECFDF5 100%)", borderRadius:10, marginBottom:12 }}>
+                    <div style={{ position:"absolute", left:`${Math.min(95,Math.max(2,(az.z/4)*100))}%`, top:-4, width:28, height:28, borderRadius:"50%", background:az.zone==="safe"?C.green:az.zone==="grey"?C.amber:C.red, border:"3px solid #fff", boxShadow:"0 2px 8px rgba(0,0,0,0.15)", transform:"translateX(-50%)" }}/>
+                    <div style={{ position:"absolute", left:"35%",  top:24, fontSize:10, color:C.amber, transform:"translateX(-50%)" }}>1.81</div>
+                    <div style={{ position:"absolute", left:"60%",  top:24, fontSize:10, color:C.green, transform:"translateX(-50%)" }}>2.99</div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:30 }}>
+                    <Badge label="< 1.81 منطقة الضائقة" bg="#FEE2E2" color={C.red}/>
+                    <Badge label="1.81-2.99 رمادية"    bg="#FEF3C7" color={C.amber}/>
+                    <Badge label="> 2.99 آمنة"          bg="#D1FAE5" color={C.green}/>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Components */}
+            <Card style={{ padding:"20px" }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📊 مكونات النموذج</p>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:C.primaryLight }}>
+                    {["المتغير","الوصف","القيمة","الوزن","المساهمة"].map(h=>(
+                      <th key={h} style={{ padding:"9px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, fontSize:11 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(az.components as any[]).map((comp:any,i:number)=>{
+                    const contribution = comp.value * comp.weight;
+                    return (
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                        <td style={{ padding:"9px 12px", color:C.primary, fontWeight:700, fontFamily:"monospace" }}>X{i+1}</td>
+                        <td style={{ padding:"9px 12px", color:C.text }}>{comp.label}</td>
+                        <td style={{ padding:"9px 12px", color:C.teal, fontWeight:600 }}>{comp.value.toFixed(3)}</td>
+                        <td style={{ padding:"9px 12px", color:C.muted }}>× {comp.weight}</td>
+                        <td style={{ padding:"9px 12px", color:contribution>0?C.green:C.red, fontWeight:700 }}>{contribution.toFixed(3)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ background:C.primaryLight, borderTop:`2px solid ${C.primary}` }}>
+                    <td colSpan={4} style={{ padding:"10px 12px", fontWeight:800, color:C.primary }}>Z-Score الإجمالي</td>
+                    <td style={{ padding:"10px 12px", fontWeight:900, color:az.zone==="safe"?C.green:az.zone==="grey"?C.amber:C.red, fontSize:16 }}>{az.z}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style={{ marginTop:14, padding:"12px 16px", borderRadius:9, background:C.bg, border:`1px solid ${C.border}` }}>
+                <p style={{ fontSize:11, color:C.textSec, margin:0, lineHeight:1.7 }}>
+                  <strong>⚠️ ملاحظة:</strong> نموذج Altman Z-Score مصمم أصلاً للشركات الصناعية المدرجة في البورصة. القيم التقديرية (رأس المال العامل، القيمة السوقية) تستخدم معادلات تقريبية. النتائج للإشارة فقط وليست بديلاً عن التقييم المهني.
+                </p>
+              </div>
+            </Card>
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📤 صفحة التصدير (PDF + Excel)
+// ══════════════════════════════════════════════════════════════════════════════
+function ExportPage({ companyId, co }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF] = useState(`${yr}-01-01`);
+  const [dT, setDT] = useState(`${yr}-12-31`);
+  const [exporting, setExporting] = useState<string|null>(null);
+
+  const { data:income }  = trpc.journal.incomeStatement.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+  const { data:balance } = trpc.journal.balanceSheet.useQuery({ companyId, asOf:dT }, { enabled:!!companyId });
+  const { data:tb }      = trpc.journal.trialBalance.useQuery({ companyId, dateFrom:dF, dateTo:dT }, { enabled:!!companyId });
+
+  const exportExcel = async (reportName: string, headers: string[], rows: any[][]) => {
+    setExporting(reportName);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      ws['!cols'] = headers.map(()=>({wch:20}));
+      XLSX.utils.book_append_sheet(wb, ws, reportName);
+      XLSX.writeFile(wb, `${reportName}-${dF}-${dT}.xlsx`);
+    } finally { setExporting(null); }
+  };
+
+  const exportTrialExcel = () => {
+    if (!tb?.length) return;
+    exportExcel("ميزان المراجعة",
+      ["كود الحساب","اسم الحساب","النوع","افتتاحي مدين","افتتاحي دائن","حركة مدين","حركة دائن","ختامي مدين","ختامي دائن"],
+      (tb as any[]).map(r=>[r.accountCode,r.accountName,r.accountType,r.openDebit,r.openCredit,r.mvtDebit,r.mvtCredit,r.closingDebit,r.closingCredit])
+    );
+  };
+
+  const exportIncomeExcel = () => {
+    if (!income) return;
+    exportExcel("قائمة الدخل",
+      ["البيان","المبلغ","النسبة%"],
+      [
+        ["الإيرادات الإجمالية",income.revenue,(100).toFixed(1)+"%"],
+        ["تكلفة المبيعات",-income.cogs,(income.revenue>0?-(income.cogs/income.revenue*100):0).toFixed(1)+"%"],
+        ["مجمل الربح",income.grossProfit,(income.revenue>0?income.grossProfit/income.revenue*100:0).toFixed(1)+"%"],
+        ["المصروفات التشغيلية",-income.expenses,(income.revenue>0?-(income.expenses/income.revenue*100):0).toFixed(1)+"%"],
+        ["الربح التشغيلي",income.operatingProfit,(income.revenue>0?income.operatingProfit/income.revenue*100:0).toFixed(1)+"%"],
+        ["صافي الربح",income.netProfit,(income.revenue>0?income.netProfit/income.revenue*100:0).toFixed(1)+"%"],
+      ]
+    );
+  };
+
+  const exportPDF = async (title: string) => {
+    setExporting(title);
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+      doc.setFontSize(16);
+      doc.text(title, 14, 16);
+      doc.setFontSize(10);
+      doc.text(`${co?.name||""} | الفترة: ${dF} إلى ${dT}`, 14, 24);
+      doc.text("تم الإنشاء بواسطة CFO Intelligence System", 14, 30);
+      doc.save(`${title}-${dT}.pdf`);
+    } finally { setExporting(null); }
+  };
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const reports = [
+    {
+      id:"trial", title:"ميزان المراجعة", icon:"⚖️",
+      desc:"6 أعمدة: افتتاحي + حركة + ختامي",
+      ready:!!tb?.length, count:tb?.length||0,
+      excel:exportTrialExcel,
+      pdf:()=>exportPDF("ميزان المراجعة"),
+    },
+    {
+      id:"income", title:"قائمة الدخل", icon:"📈",
+      desc:"إيرادات - تكاليف - مصروفات = صافي ربح",
+      ready:!!income?.revenue,
+      excel:exportIncomeExcel,
+      pdf:()=>exportPDF("قائمة الدخل"),
+    },
+    {
+      id:"balance", title:"الميزانية العمومية", icon:"🏦",
+      desc:"أصول = التزامات + حقوق ملكية",
+      ready:!!balance?.assets,
+      excel:()=>exportExcel("الميزانية",["البيان","القيمة"],[["الأصول",balance?.assets||0],["الالتزامات",balance?.liabilities||0],["حقوق الملكية",balance?.equity||0]]),
+      pdf:()=>exportPDF("الميزانية العمومية"),
+    },
+  ];
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <PageTitle title="📤 تصدير التقارير" sub="PDF + Excel"/>
+        <div style={{ display:"flex", gap:8 }}>
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <span style={{ color:C.muted }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
+        {reports.map(r=>(
+          <Card key={r.id} style={{ padding:"20px", display:"flex", flexDirection:"column", gap:14 }}>
+            <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
+              <div style={{ width:46,height:46,borderRadius:12,background:C.primaryLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0 }}>{r.icon}</div>
+              <div>
+                <p style={{ fontWeight:800, color:C.text, margin:"0 0 4px", fontSize:14 }}>{r.title}</p>
+                <p style={{ color:C.textSec, fontSize:12, margin:"0 0 6px" }}>{r.desc}</p>
+                <Badge label={r.ready?`✅ جاهز${r.count?` (${r.count})`:""}`:r.ready===false?"⚠️ لا توجد بيانات":"⏳ جاري..."} bg={r.ready?C.greenLight:C.amberLight} color={r.ready?C.green:C.amber}/>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:"auto" }}>
+              <button onClick={r.excel} disabled={!r.ready||exporting===r.title}
+                style={{ flex:1, padding:"9px", borderRadius:8, border:`1px solid ${C.border}`, background:r.ready?"#217346":"#94A3B8", color:"#fff", cursor:r.ready?"pointer":"default", fontSize:12, fontWeight:700 }}>
+                {exporting===r.title?"⏳...":"📊 Excel"}
+              </button>
+              <button onClick={r.pdf} disabled={!r.ready||exporting===r.title}
+                style={{ flex:1, padding:"9px", borderRadius:8, border:"none", background:r.ready?C.red:"#94A3B8", color:"#fff", cursor:r.ready?"pointer":"default", fontSize:12, fontWeight:700 }}>
+                {exporting===r.title?"⏳...":"📄 PDF"}
+              </button>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ padding:"16px 20px", marginTop:14 }}>
+        <p style={{ fontWeight:700, fontSize:13, color:C.text, margin:"0 0 10px" }}>📋 إرشادات التصدير</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {[
+            {icon:"📊",l:"Excel",d:"جداول قابلة للتحرير — مناسبة للمراجعة والتحليل الإضافي"},
+            {icon:"📄",l:"PDF",d:"نسخة نهائية للطباعة والمشاركة مع الإدارة"},
+          ].map((s,i)=>(
+            <div key={i} style={{ padding:"12px", borderRadius:8, background:C.bg, border:`1px solid ${C.border}` }}>
+              <p style={{ fontWeight:700, color:C.text, margin:"0 0 4px", fontSize:13 }}>{s.icon} {s.l}</p>
+              <p style={{ color:C.textSec, fontSize:12, margin:0 }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
@@ -3378,6 +3842,9 @@ function AnalyticCentersPage({ companyId, co }:any) {
       case "monthly-detail":    return <MonthlyDetailPage companyId={companyId} co={co}/>;
       case "multi-company":     return <MultiCompanyPage currentUser={user}/>;
       case "analytic":          return <AnalyticCentersPage companyId={companyId} co={co}/>;
+      case "aging":             return <AgingReportPage companyId={companyId} co={co}/>;
+      case "advanced":          return <AdvancedAnalysisPage companyId={companyId} co={co}/>;
+      case "export":            return <ExportPage companyId={companyId} co={co}/>;
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;
       case "chatbot":           return <ChatbotPage companyId={companyId} co={co}/>;
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;

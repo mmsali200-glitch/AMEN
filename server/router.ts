@@ -719,7 +719,223 @@ const journalRouter = router({
       return (res as any).rows||[];
     }),
 
-  // تحليل الشركة شهرياً بالتفصيل
+  // ── تقرير شيخوخة الديون (Aging Report) ─────────────────────────────────
+  agingReport: protectedProcedure
+    .input(z.object({ companyId:z.number(), asOf:z.string(), type:z.string().default("receivable") }))
+    .query(async ({ input }) => {
+      const cid = input.companyId, dt = input.asOf;
+      // حسابات المدينين (1xxx) أو الدائنين (2xxx)
+      const prefix = input.type === "receivable" ? "1" : "2";
+
+      const rows = await db.run(sql`
+        SELECT
+          jl.partner_name,
+          jl.account_code, jl.account_name,
+          jl.date,
+          SUM(jl.debit - jl.credit) as balance,
+          CAST(julianday(${dt}) - julianday(jl.date) AS INTEGER) as days_outstanding
+        FROM journal_entry_lines jl
+        LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+        WHERE jl.company_id = ${cid}
+          AND jl.date <= ${dt}
+          AND jl.account_code LIKE ${prefix + '%'}
+          AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+          AND jl.partner_name IS NOT NULL AND jl.partner_name != ''
+        GROUP BY jl.partner_name, jl.account_code, jl.date
+        HAVING ABS(balance) > 0.01
+        ORDER BY days_outstanding DESC`);
+
+      // تجميع بالشريك + تصنيف حسب الفئة الزمنية
+      const partners: Record<string, any> = {};
+      for (const r of (rows as any).rows || []) {
+        const key = String(r.partner_name || "");
+        const days = Number(r.days_outstanding) || 0;
+        const bal  = Number(r.balance) || 0;
+        if (!partners[key]) partners[key] = { name:key, current:0, d30:0, d60:0, d90:0, d90plus:0, total:0 };
+        partners[key].total += bal;
+        if (days <= 30)       partners[key].current += bal;
+        else if (days <= 60)  partners[key].d30 += bal;
+        else if (days <= 90)  partners[key].d60 += bal;
+        else if (days <= 180) partners[key].d90 += bal;
+        else                  partners[key].d90plus += bal;
+      }
+
+      const list = Object.values(partners)
+        .filter((p:any) => Math.abs(p.total) > 0.01)
+        .sort((a:any, b:any) => Math.abs(b.total) - Math.abs(a.total));
+
+      const totals = list.reduce((t:any, p:any) => ({
+        current:   t.current   + p.current,
+        d30:       t.d30       + p.d30,
+        d60:       t.d60       + p.d60,
+        d90:       t.d90       + p.d90,
+        d90plus:   t.d90plus   + p.d90plus,
+        total:     t.total     + p.total,
+      }), { current:0, d30:0, d60:0, d90:0, d90plus:0, total:0 });
+
+      return { type:input.type, asOf:dt, partners:list, totals };
+    }),
+
+  // ── DuPont Analysis ───────────────────────────────────────────────────────
+  dupont: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      const dF = `${input.year}-01-01`, dT = `${input.year}-12-31`;
+      const income = await db.run(sql`
+        SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c
+        FROM journal_entry_lines jl LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+        WHERE jl.company_id=${input.companyId} AND jl.date>=${dF} AND jl.date<=${dT}
+          AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+        GROUP BY jl.account_type`);
+      const bs = await db.run(sql`
+        SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c
+        FROM journal_entry_lines jl WHERE jl.company_id=${input.companyId} AND jl.date<=${dT}
+        GROUP BY jl.account_type`);
+
+      let rev=0, cogs=0, exp=0, assets=0, equity=0, liab=0, profit=0;
+      for (const r of (income as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="revenue") rev+=c-d;
+        else if (r.account_type==="cogs") cogs+=d-c;
+        else if (r.account_type==="expenses") exp+=d-c;
+      }
+      profit = rev - cogs - exp;
+      for (const r of (bs as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="assets") assets+=d-c;
+        else if (r.account_type==="liabilities") liab+=c-d;
+        else if (r.account_type==="equity") equity+=c-d;
+      }
+      equity += profit;
+
+      const netMargin    = rev > 0 ? profit/rev : 0;
+      const assetTurnover = assets > 0 ? rev/assets : 0;
+      const leverage      = equity > 0 ? assets/equity : 0;
+      const roe           = netMargin * assetTurnover * leverage;
+
+      return {
+        revenue:rev, netProfit:profit, assets, equity, liab,
+        netMargin: netMargin*100, assetTurnover, leverage,
+        roa: assets>0?profit/assets*100:0,
+        roe: roe*100,
+        grossMargin: rev>0?(rev-cogs)/rev*100:0,
+        operatingMargin: rev>0?(rev-cogs-exp)/rev*100:0,
+        debtRatio: assets>0?liab/assets*100:0,
+        equityMultiplier: leverage,
+      };
+    }),
+
+  // ── Altman Z-Score ────────────────────────────────────────────────────────
+  altmanZScore: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      const dT = `${input.year}-12-31`, dF = `${input.year}-01-01`;
+      const bs = await db.run(sql`SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c FROM journal_entry_lines jl WHERE jl.company_id=${input.companyId} AND jl.date<=${dT} GROUP BY jl.account_type`);
+      const inc = await db.run(sql`SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c FROM journal_entry_lines jl LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id WHERE jl.company_id=${input.companyId} AND jl.date>=${dF} AND jl.date<=${dT} AND (je.name IS NULL OR je.name!='رصيد افتتاحي') GROUP BY jl.account_type`);
+
+      let assets=0, liab=0, equity=0, rev=0, cogs=0, exp=0;
+      for (const r of (bs as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="assets") assets+=d-c;
+        else if (r.account_type==="liabilities") liab+=c-d;
+        else if (r.account_type==="equity") equity+=c-d;
+      }
+      for (const r of (inc as any).rows||[]) {
+        const d=Number(r.d)||0, c=Number(r.c)||0;
+        if (r.account_type==="revenue") rev+=c-d;
+        else if (r.account_type==="cogs") cogs+=d-c;
+        else if (r.account_type==="expenses") exp+=d-c;
+      }
+      const netProfit = rev - cogs - exp;
+      equity += netProfit;
+      const workingCapital = assets * 0.4 - liab * 0.6; // تقدير
+      const retainedEarnings = netProfit * 0.7;
+      const ebit = netProfit * 1.3;
+      const marketEquity = equity;
+
+      const x1 = assets > 0 ? workingCapital/assets : 0;
+      const x2 = assets > 0 ? retainedEarnings/assets : 0;
+      const x3 = assets > 0 ? ebit/assets : 0;
+      const x4 = liab > 0 ? marketEquity/liab : 0;
+      const x5 = assets > 0 ? rev/assets : 0;
+
+      const z = 1.2*x1 + 1.4*x2 + 3.3*x3 + 0.6*x4 + 1.0*x5;
+
+      const zone = z > 2.99 ? "safe" : z > 1.81 ? "grey" : "distress";
+      const zoneLabel = zone==="safe"?"✅ منطقة آمنة":zone==="grey"?"⚠️ منطقة رمادية":"❌ منطقة الضائقة";
+
+      return {
+        z: Number(z.toFixed(3)), zone, zoneLabel,
+        x1:Number((x1*100).toFixed(2)), x2:Number((x2*100).toFixed(2)),
+        x3:Number((x3*100).toFixed(2)), x4:Number((x4*100).toFixed(2)),
+        x5:Number((x5).toFixed(3)),
+        assets, equity, liab, rev, netProfit,
+        components: [
+          {label:"رأس المال العامل / الأصول (×1.2)",   value:x1, weight:1.2},
+          {label:"الأرباح المحتجزة / الأصول (×1.4)",  value:x2, weight:1.4},
+          {label:"EBIT / الأصول (×3.3)",               value:x3, weight:3.3},
+          {label:"حقوق الملكية / الديون (×0.6)",       value:x4, weight:0.6},
+          {label:"المبيعات / الأصول (×1.0)",            value:x5, weight:1.0},
+        ]
+      };
+    }),
+
+  // ── Smart Alerts ──────────────────────────────────────────────────────────
+  smartAlerts: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      const dT = `${input.year}-12-31`, dF = `${input.year}-01-01`;
+      const prevDT = `${input.year-1}-12-31`, prevDF = `${input.year-1}-01-01`;
+      const alerts: any[] = [];
+
+      const getMetrics = async (from:string, to:string) => {
+        const rows = await db.run(sql`SELECT jl.account_type, SUM(jl.debit) d, SUM(jl.credit) c FROM journal_entry_lines jl LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id WHERE jl.company_id=${input.companyId} AND jl.date>=${from} AND jl.date<=${to} AND (je.name IS NULL OR je.name!='رصيد افتتاحي') GROUP BY jl.account_type`);
+        let r=0,co=0,e=0;
+        for (const row of (rows as any).rows||[]) {
+          const d=Number(row.d)||0,c=Number(row.c)||0;
+          if (row.account_type==="revenue") r+=c-d;
+          else if (row.account_type==="cogs") co+=d-c;
+          else if (row.account_type==="expenses") e+=d-c;
+        }
+        return { rev:r, cogs:co, exp:e, profit:r-co-e };
+      };
+
+      const cur  = await getMetrics(dF, dT);
+      const prev = await getMetrics(prevDF, prevDT);
+
+      // تغيير الإيرادات
+      if (prev.rev > 0) {
+        const revChg = ((cur.rev - prev.rev)/prev.rev)*100;
+        if (revChg < -10) alerts.push({ level:"danger", icon:"📉", title:"انخفاض الإيرادات", msg:`انخفضت الإيرادات بنسبة ${Math.abs(revChg).toFixed(1)}% مقارنة بالعام السابق`, value:revChg.toFixed(1)+"%" });
+        else if (revChg > 20) alerts.push({ level:"success", icon:"📈", title:"نمو قوي في الإيرادات", msg:`نمت الإيرادات بنسبة ${revChg.toFixed(1)}% مقارنة بالعام السابق`, value:revChg.toFixed(1)+"%" });
+      }
+
+      // الربحية
+      if (cur.rev > 0) {
+        const margin = (cur.profit/cur.rev)*100;
+        if (cur.profit < 0) alerts.push({ level:"danger", icon:"❌", title:"شركة خاسرة", msg:`صافي خسارة ${Math.abs(cur.profit).toLocaleString('ar')} — يتطلب مراجعة عاجلة`, value: margin.toFixed(1)+"%" });
+        else if (margin < 5) alerts.push({ level:"warning", icon:"⚠️", title:"هامش ربح منخفض", msg:`هامش الربح ${margin.toFixed(1)}% أقل من المعيار (10%)`, value: margin.toFixed(1)+"%" });
+        else if (margin > 30) alerts.push({ level:"success", icon:"🏆", title:"هامش ربح ممتاز", msg:`هامش الربح ${margin.toFixed(1)}% يتجاوز المعيار`, value: margin.toFixed(1)+"%" });
+      }
+
+      // نسبة المصروفات
+      if (cur.rev > 0) {
+        const expRatio = ((cur.exp)/cur.rev)*100;
+        if (expRatio > 60) alerts.push({ level:"warning", icon:"💸", title:"مصروفات مرتفعة", msg:`المصروفات ${expRatio.toFixed(1)}% من الإيرادات — تجاوزت 60%`, value: expRatio.toFixed(1)+"%" });
+      }
+
+      // مقارنة مع العام السابق - المصروفات
+      if (prev.exp > 0) {
+        const expChg = ((cur.exp - prev.exp)/prev.exp)*100;
+        if (expChg > 25) alerts.push({ level:"warning", icon:"📊", title:"ارتفاع المصروفات", msg:`ارتفعت المصروفات بنسبة ${expChg.toFixed(1)}% مقارنة بالعام السابق`, value: expChg.toFixed(1)+"%" });
+      }
+
+      if (!alerts.length) alerts.push({ level:"success", icon:"✅", title:"الأداء المالي جيد", msg:"لا توجد تنبيهات بالغة — استمر في المراقبة الدورية", value:"OK" });
+
+      return { alerts, year:input.year, currentMetrics:cur, prevMetrics:prev };
+    }),
+
+  // ── تحليل الشركة شهرياً بالتفصيل
   monthlyDetail: protectedProcedure
     .input(z.object({ companyId:z.number(), year:z.number(), month:z.number() }))
     .query(async ({ input }) => {
