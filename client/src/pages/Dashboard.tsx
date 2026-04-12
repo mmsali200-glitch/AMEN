@@ -2524,28 +2524,29 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const [isDark, setDark]    = useState(()=>localStorage.getItem("cfo_theme")==="dark");
   if (isDark) C = THEMES.dark; else C = THEMES.light;
 
-  // Auto-check alerts every 10 minutes
-  const checkAlerts = (trpc as any).journal.checkAndFireAlerts.useMutation();
-  const { data:dailySummary } = (trpc as any).journal.dailySummary.useQuery(
-    { companyId, year:new Date().getFullYear() },
-    { enabled:!!companyId, refetchInterval:5*60*1000 }
-  );
-  const unreadAlerts = dailySummary?.unreadAlerts || 0;
-  const emergencyCount = dailySummary?.emergencyCount || 0;
-
-  useEffect(()=>{
-    if (!companyId) return;
-    const runCheck = () => checkAlerts.mutate({ companyId, year:new Date().getFullYear() });
-    runCheck();
-    const timer = setInterval(runCheck, 10*60*1000);
-    return ()=>clearInterval(timer);
-  }, [companyId]);
+  // alerts: moved below
   const [exp, setExp] = useState<Record<string,boolean>>(()=>Object.fromEntries(NAV.map(s=>[s.s,true])));
   const { data:companies } = trpc.company.list.useQuery();
   const [companyId, setCompanyId] = useState(0);
   if (!companyId && companies?.length) setCompanyId(companies[0].id);
   const co = companies?.find((c:any)=>c.id===companyId);
-  const label = NAV.flatMap(s=>s.items).find(i=>i.id===page)?.label||page;
+  const label = NAV.flatMap(s=>s.items).find(i=>i.id===page)?.label
+
+  // ── Budget alerts (needs companyId) ────────────────────────────────────
+  const checkAlerts = (trpc as any).journal.checkAndFireAlerts.useMutation();
+  const { data:dailySummary } = (trpc as any).journal.dailySummary.useQuery(
+    { companyId, year:new Date().getFullYear() },
+    { enabled:!!companyId, refetchInterval:5*60*1000 }
+  );
+  const unreadAlerts   = dailySummary?.unreadAlerts   || 0;
+  const emergencyCount = dailySummary?.emergencyCount || 0;
+
+  useEffect(()=>{
+    if (!companyId) return;
+    const runCheck = () => checkAlerts.mutate({ companyId, year:new Date().getFullYear() });
+    const timer = setInterval(runCheck, 10*60*1000);
+    return ()=>clearInterval(timer);
+  }, [companyId]);
   const rc = roleLabels[user.role]||roleLabels.custom;
 
 
