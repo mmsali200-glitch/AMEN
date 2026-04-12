@@ -2518,8 +2518,28 @@ function BudgetMonitorPage({ companyId, co }:any) {
 
 
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
-  const [page, setPage] = useState("dashboard");
-  const [open, setOpen] = useState(true);
+  const [page, setPage]      = useState("dashboard");
+  const [open, setOpen]      = useState(true);
+  const [showSearch, setShowSearch] = useState(false);
+  const [isDark, setDark]    = useState(()=>localStorage.getItem("cfo_theme")==="dark");
+  if (isDark) C = THEMES.dark; else C = THEMES.light;
+
+  // Auto-check alerts every 10 minutes
+  const checkAlerts = (trpc as any).journal.checkAndFireAlerts.useMutation();
+  const { data:dailySummary } = (trpc as any).journal.dailySummary.useQuery(
+    { companyId, year:new Date().getFullYear() },
+    { enabled:!!companyId, refetchInterval:5*60*1000 }
+  );
+  const unreadAlerts = dailySummary?.unreadAlerts || 0;
+  const emergencyCount = dailySummary?.emergencyCount || 0;
+
+  useEffect(()=>{
+    if (!companyId) return;
+    const runCheck = () => checkAlerts.mutate({ companyId, year:new Date().getFullYear() });
+    runCheck();
+    const timer = setInterval(runCheck, 10*60*1000);
+    return ()=>clearInterval(timer);
+  }, [companyId]);
   const [exp, setExp] = useState<Record<string,boolean>>(()=>Object.fromEntries(NAV.map(s=>[s.s,true])));
   const { data:companies } = trpc.company.list.useQuery();
   const [companyId, setCompanyId] = useState(0);
@@ -4720,6 +4740,17 @@ function ExportPage({ companyId, co }:any) {
 }
 
 
+  // Keyboard shortcuts
+  useEffect(()=>{
+    const h = (e:KeyboardEvent) => {
+      if ((e.ctrlKey||e.metaKey)&&e.key==="k") { e.preventDefault(); setShowSearch(true); }
+      if (e.key==="Escape") setShowSearch(false);
+      if ((e.ctrlKey||e.metaKey)&&e.key==="d") { e.preventDefault(); setPage("dashboard"); }
+    };
+    window.addEventListener("keydown", h);
+    return ()=>window.removeEventListener("keydown", h);
+  }, []);
+
   const renderPage = () => {
     switch(page) {
       case "dashboard":         return <DashboardPage companyId={companyId} co={co} onNavigate={setPage}/>;
@@ -4808,11 +4839,58 @@ function ExportPage({ companyId, co }:any) {
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             <Badge label="● مباشر" bg={C.greenLight} color={C.green}/>
             {co && <Badge label={co.name?.slice(0,12)+"..."} bg={C.primaryLight} color={C.primary}/>}
+            {/* Bell notification with badge */}
+            <div style={{ position:"relative" }}>
+              <button onClick={()=>setPage("budget-monitor")}
+                style={{ position:"relative", padding:"5px 10px", borderRadius:8, border:`1px solid ${emergencyCount>0?"#FECACA":unreadAlerts>0?"#FDE68A":C.border}`, background:emergencyCount>0?C.redLight:unreadAlerts>0?C.amberLight:C.bg, cursor:"pointer", fontSize:16 }}>
+                🔔
+              </button>
+              {unreadAlerts > 0 && (
+                <span style={{ position:"absolute", top:-4, right:-4, minWidth:18, height:18, borderRadius:9, background:emergencyCount>0?C.red:C.amber, color:"#fff", fontSize:10, fontWeight:900, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 4px", border:"2px solid #fff" }}>
+                  {unreadAlerts > 99 ? "99+" : unreadAlerts}
+                </span>
+              )}
+            </div>
+            {/* Ctrl+K search */}
+            <button onClick={()=>setShowSearch(true)}
+              style={{ display:"flex", gap:5, alignItems:"center", padding:"5px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, cursor:"pointer", fontSize:11, color:C.muted }}>
+              🔍 <kbd style={{ padding:"1px 5px", borderRadius:3, border:`1px solid ${C.border}`, fontSize:10 }}>K</kbd>
+            </button>
+            {/* Dark mode */}
+            <button onClick={()=>{ const d=!isDark; setDark(d); localStorage.setItem("cfo_theme",d?"dark":"light"); }}
+              style={{ padding:"5px 9px", borderRadius:8, border:`1px solid ${C.border}`, background:isDark?C.primary:C.bg, color:isDark?"#fff":C.textSec, cursor:"pointer", fontSize:13 }}>
+              {isDark?"☀️":"🌙"}
+            </button>
             <button onClick={onLogout} style={{ padding:"5px 12px", borderRadius:8, border:`1px solid #FECACA`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:11, fontWeight:600 }}>خروج</button>
           </div>
         </header>
         <main style={{ flex:1, overflowY:"auto", paddingTop:18 }}>{renderPage()}</main>
       </div>
+    {/* Global Search Ctrl+K */}
+    {showSearch && (
+      <div onClick={()=>setShowSearch(false)} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:"18vh",zIndex:9999,direction:"rtl" }}>
+        <div onClick={e=>e.stopPropagation()} style={{ background:C.surface,borderRadius:16,padding:18,width:440,boxShadow:"0 20px 60px rgba(0,0,0,0.3)",border:`1px solid ${C.border}` }}>
+          <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:14 }}>
+            <span style={{ fontSize:16,color:C.muted }}>🔍</span>
+            <input autoFocus placeholder="انتقل لصفحة... (ابدأ الكتابة)"
+              onChange={e=>{ const q=e.target.value.toLowerCase(); if(!q)return; const m=NAV.flatMap(s=>s.items).find(i=>i.label.includes(q)||i.id.includes(q)); if(m){setPage(m.id);setShowSearch(false);} }}
+              style={{ flex:1,border:"none",outline:"none",fontSize:15,background:"transparent",color:C.text,fontFamily:"Cairo,sans-serif" }}/>
+            <kbd style={{ padding:"2px 8px",borderRadius:5,border:`1px solid ${C.border}`,fontSize:11,color:C.muted }}>Esc</kbd>
+          </div>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:4 }}>
+            {NAV.flatMap(s=>s.items).map(item=>(
+              <button key={item.id} onClick={()=>{setPage(item.id);setShowSearch(false);}}
+                style={{ padding:"8px 12px",borderRadius:8,border:`1px solid ${page===item.id?C.primary:C.border}`,background:page===item.id?C.primaryLight:"transparent",color:page===item.id?C.primary:C.textSec,cursor:"pointer",fontSize:12,textAlign:"right",display:"flex",gap:6,alignItems:"center",fontFamily:"Cairo,sans-serif" }}>
+                <span style={{ fontSize:13 }}>{item.icon}</span>{item.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ marginTop:10,padding:"8px 12px",borderRadius:8,background:C.bg,fontSize:10,color:C.muted,display:"flex",gap:16 }}>
+            <span>Ctrl+D لوحة التحكم</span><span>Ctrl+K بحث</span><span>Esc إغلاق</span>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }

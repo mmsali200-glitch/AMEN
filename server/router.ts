@@ -896,6 +896,94 @@ const journalRouter = router({
       return { success: true };
     }),
 
+  // فحص تلقائي وإرسال التنبيهات
+  checkAndFireAlerts: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .mutation(async ({ input }) => {
+      const cid = input.companyId, yr = input.year;
+      const dF = `${yr}-01-01`, dT = `${yr}-12-31`;
+
+      // جلب الأهداف والأداء الفعلي
+      const targets = await db.run(sql`SELECT * FROM cost_center_targets WHERE company_id=${cid} AND year=${yr} AND is_active=1`).catch(()=>({rows:[]}));
+      const actuals = await db.run(sql`
+        SELECT odoo_analytic_id, account_type, SUM(credit-debit) as amount
+        FROM analytic_lines WHERE company_id=${cid} AND date>=${dF} AND date<=${dT}
+        GROUP BY odoo_analytic_id, account_type`).catch(()=>({rows:[]}));
+
+      const actualsMap:Record<number,{rev:number,exp:number}> = {};
+      for (const r of (actuals as any).rows||[]) {
+        const id=Number(r.odoo_analytic_id); if(!actualsMap[id])actualsMap[id]={rev:0,exp:0};
+        if(r.account_type==="revenue"||r.account_type==="other_income")actualsMap[id].rev+=Number(r.amount)||0;
+        else if(r.account_type==="expenses"||r.account_type==="cogs")actualsMap[id].exp+=Math.abs(Number(r.amount)||0);
+      }
+
+      const dayOfYear = Math.ceil((new Date().getTime()-new Date(`${yr}-01-01`).getTime())/86400000);
+      const yearPct   = dayOfYear/365;
+      const fired:string[] = [];
+
+      for (const t of (targets as any).rows||[]) {
+        const actual = actualsMap[Number(t.analytic_id)]||{rev:0,exp:0};
+        const expPct  = t.planned_expenses>0?actual.exp/t.planned_expenses*100:0;
+        const revPct  = t.target_revenue>0?actual.rev/t.target_revenue*100:0;
+
+        // فحص المصروفات
+        let severity:string|null = null, msg = "";
+        if (expPct>=100)  { severity="emergency"; msg=`🚨 تجاوز ميزانية المصروفات ${expPct.toFixed(0)}% — ${t.center_name}`; }
+        else if(expPct>=(t.alert_exp_pct||80)) { severity="critical"; msg=`⚠️ اقتراب من حد الميزانية ${expPct.toFixed(0)}% — ${t.center_name}`; }
+        else if(expPct>=70) { severity="warning"; msg=`⚠️ استهلاك 70%+ من الميزانية — ${t.center_name}`; }
+
+        if (severity) {
+          // تحقق إذا لم يُرسل نفس التنبيه اليوم
+          const today = new Date().toISOString().split("T")[0];
+          const dup = await db.run(sql`SELECT id FROM budget_alert_history WHERE company_id=${cid} AND analytic_id=${t.analytic_id} AND severity=${severity} AND date(created_at)=${today} LIMIT 1`).catch(()=>({rows:[]}));
+          if (!(dup as any).rows?.length) {
+            await db.run(sql`INSERT INTO budget_alert_history (company_id, analytic_id, center_name, alert_type, severity, message, actual_value, planned_value, pct_used) VALUES (${cid}, ${t.analytic_id}, ${t.center_name}, 'expenses', ${severity}, ${msg}, ${actual.exp}, ${t.planned_expenses}, ${expPct})`);
+            fired.push(msg);
+          }
+        }
+
+        // تنبؤ بنهاية السنة
+        if (yearPct > 0.1) {
+          const forecastExp = actual.exp / yearPct;
+          if (forecastExp > t.planned_expenses * 1.15) {
+            const excessPct = ((forecastExp-t.planned_expenses)/t.planned_expenses*100).toFixed(0);
+            const predMsg = `📈 تنبؤ: ميزانية ${t.center_name} ستتجاوز الحد بـ ${excessPct}% بنهاية السنة`;
+            const today = new Date().toISOString().split("T")[0];
+            const dup2 = await db.run(sql`SELECT id FROM budget_alert_history WHERE company_id=${cid} AND analytic_id=${t.analytic_id} AND alert_type='forecast' AND date(created_at)=${today} LIMIT 1`).catch(()=>({rows:[]}));
+            if (!(dup2 as any).rows?.length) {
+              await db.run(sql`INSERT INTO budget_alert_history (company_id, analytic_id, center_name, alert_type, severity, message, actual_value, planned_value, pct_used) VALUES (${cid}, ${t.analytic_id}, ${t.center_name}, 'forecast', 'warning', ${predMsg}, ${forecastExp}, ${t.planned_expenses}, ${forecastExp/t.planned_expenses*100})`);
+              fired.push(predMsg);
+            }
+          }
+        }
+
+        // تنبيه الإيرادات القاصرة
+        if (yearPct > 0.5 && t.target_revenue > 0 && revPct < 50) {
+          const revMsg = `💰 ${t.center_name}: الإيرادات ${revPct.toFixed(0)}% من الهدف في منتصف السنة`;
+          const today  = new Date().toISOString().split("T")[0];
+          const dup3 = await db.run(sql`SELECT id FROM budget_alert_history WHERE company_id=${cid} AND analytic_id=${t.analytic_id} AND alert_type='revenue' AND date(created_at)=${today} LIMIT 1`).catch(()=>({rows:[]}));
+          if (!(dup3 as any).rows?.length) {
+            await db.run(sql`INSERT INTO budget_alert_history (company_id, analytic_id, center_name, alert_type, severity, message, actual_value, planned_value, pct_used) VALUES (${cid}, ${t.analytic_id}, ${t.center_name}, 'revenue', 'warning', ${revMsg}, ${actual.rev}, ${t.target_revenue}, ${revPct})`);
+            fired.push(revMsg);
+          }
+        }
+      }
+
+      return { fired, count: fired.length };
+    }),
+
+  // الملخص اليومي الصباحي
+  dailySummary: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      const unread = await db.run(sql`SELECT count(*) n FROM budget_alert_history WHERE company_id=${input.companyId} AND is_read=0`).catch(()=>({rows:[{n:0}]}));
+      const exceeded = await db.run(sql`SELECT count(*) n FROM budget_alert_history WHERE company_id=${input.companyId} AND severity='emergency' AND is_read=0`).catch(()=>({rows:[{n:0}]}));
+      return {
+        unreadAlerts: Number((unread as any).rows?.[0]?.n||0),
+        emergencyCount: Number((exceeded as any).rows?.[0]?.n||0),
+      };
+    }),
+
   // تحديد تنبيه كمقروء
   markAlertRead: protectedProcedure
     .input(z.object({ companyId:z.number(), alertId:z.number().optional() }))
