@@ -708,6 +708,180 @@ const journalRouter = router({
       return { lines };
     }),
 
+  // ══ تقرير المبيعات اليومية حسب مراكز التكلفة ════════════════════════════
+  dailySalesReport: protectedProcedure
+    .input(z.object({
+      companyId: z.number(),
+      dateFrom:  z.string(),
+      dateTo:    z.string(),
+      compareFrom: z.string().optional(), // فترة المقارنة (السنة الماضية)
+      compareTo:   z.string().optional(),
+      accountTypes: z.array(z.string()).default(["revenue","other_income"]),
+    }))
+    .query(async ({ input }) => {
+      const { companyId: cid, dateFrom: dF, dateTo: dT } = input;
+
+      // بناء lookup شامل للحسابات التحليلية من جميع الشركات
+      const allAnalytic = await db.run(sql`
+        SELECT odoo_analytic_id, name, code
+        FROM analytic_accounts
+        ORDER BY name`).catch(()=>({rows:[]}));
+
+      const analyticLookup: Record<number, {name:string, code:string}> = {};
+      for (const r of (allAnalytic as any).rows||[]) {
+        analyticLookup[Number(r.odoo_analytic_id)] = {
+          name: r.name || `مركز #${r.odoo_analytic_id}`,
+          code: r.code || ""
+        };
+      }
+
+      // جلب الحركات اليومية من analytic_lines حسب مركز التكلفة
+      const inTypes = input.accountTypes.map(t => `'${t}'`).join(',');
+      const rows = await db.run(sql`
+        SELECT
+          al.date,
+          al.odoo_analytic_id,
+          al.analytic_name,
+          SUM(al.credit - al.debit) as amount,
+          COUNT(*) as txn_count
+        FROM analytic_lines al
+        WHERE al.company_id = ${cid}
+          AND al.date >= ${dF}
+          AND al.date <= ${dT}
+          AND al.account_type IN (${inTypes})
+        GROUP BY al.date, al.odoo_analytic_id
+        ORDER BY al.date, al.odoo_analytic_id`).catch(()=>({rows:[]}));
+
+      // إذا لا توجد analytic_lines، جرّب من journal_entry_lines مباشرة
+      const mainRows = (rows as any).rows || [];
+      let finalRows = mainRows;
+
+      if (mainRows.length === 0) {
+        // fallback: group by account_code (كود الحساب = مركز تكلفة تقريبي)
+        const fbRows = await db.run(sql`
+          SELECT
+            jl.date,
+            jl.account_code as odoo_analytic_id,
+            jl.account_name as analytic_name,
+            SUM(jl.credit - jl.debit) as amount,
+            COUNT(*) as txn_count
+          FROM journal_entry_lines jl
+          LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+          WHERE jl.company_id = ${cid}
+            AND jl.date >= ${dF}
+            AND jl.date <= ${dT}
+            AND jl.account_type IN (${inTypes})
+            AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+          GROUP BY jl.date, jl.account_code
+          ORDER BY jl.date, jl.account_code`).catch(()=>({rows:[]}));
+        finalRows = (fbRows as any).rows || [];
+      }
+
+      // بناء المصفوفة: { date -> { centerId -> amount } }
+      const dateMap: Record<string, Record<string, number>> = {};
+      const centerSet: Set<string> = new Set();
+      const centerNames: Record<string, {name:string, code:string}> = {};
+
+      for (const r of finalRows) {
+        const date     = String(r.date);
+        const centerId = String(r.odoo_analytic_id);
+        const amount   = Number(r.amount) || 0;
+        if (amount <= 0) continue;
+
+        if (!dateMap[date]) dateMap[date] = {};
+        dateMap[date][centerId] = (dateMap[date][centerId] || 0) + amount;
+        centerSet.add(centerId);
+
+        if (!centerNames[centerId]) {
+          const fromLookup = analyticLookup[Number(centerId)];
+          centerNames[centerId] = {
+            name: fromLookup?.name || String(r.analytic_name || `مركز ${centerId}`),
+            code: fromLookup?.code || ""
+          };
+        }
+      }
+
+      // حساب إجمالي كل مركز لترتيب المراكز
+      const centerTotals: Record<string, number> = {};
+      for (const [, dayData] of Object.entries(dateMap)) {
+        for (const [ctr, amt] of Object.entries(dayData)) {
+          centerTotals[ctr] = (centerTotals[ctr] || 0) + amt;
+        }
+      }
+      const centers = [...centerSet]
+        .sort((a, b) => (centerTotals[b]||0) - (centerTotals[a]||0));
+
+      // قائمة الأيام المرتبة
+      const dates = Object.keys(dateMap).sort();
+
+      // إجمالي MTD لكل مركز
+      const mtdByCtr: Record<string,number> = {};
+      for (const cid2 of centers) mtdByCtr[cid2] = centerTotals[cid2] || 0;
+      const grandTotal = Object.values(mtdByCtr).reduce((s,v)=>s+v,0);
+
+      // إجمالي يومي
+      const dailyTotal: Record<string,number> = {};
+      for (const [date, dayData] of Object.entries(dateMap)) {
+        dailyTotal[date] = Object.values(dayData).reduce((s,v)=>s+v,0);
+      }
+
+      // بيانات المقارنة (السنة الماضية) — اختياري
+      let compareData: Record<string, number> = {};
+      if (input.compareFrom && input.compareTo) {
+        const cmpRows = await db.run(sql`
+          SELECT al.odoo_analytic_id, SUM(al.credit - al.debit) as amount
+          FROM analytic_lines al
+          WHERE al.company_id = ${cid}
+            AND al.date >= ${input.compareFrom}
+            AND al.date <= ${input.compareTo}
+            AND al.account_type IN (${inTypes})
+          GROUP BY al.odoo_analytic_id`).catch(()=>({rows:[]}));
+        for (const r of (cmpRows as any).rows||[]) {
+          compareData[String(r.odoo_analytic_id)] = Number(r.amount)||0;
+        }
+      }
+
+      return {
+        source: mainRows.length > 0 ? "analytic_lines" : "journal_entry_lines",
+        centers,
+        centerNames,
+        dates,
+        dateMap,
+        mtdByCtr,
+        dailyTotal,
+        grandTotal,
+        compareData,
+        centerTotals,
+      };
+    }),
+
+  // ── اسماء المراكز التحليلية (للاختيار في الفلتر) ──────────────────────
+  analyticCenterList: protectedProcedure
+    .input(z.object({ companyId: z.number() }))
+    .query(async ({ input }) => {
+      const rows = await db.run(sql`
+        SELECT DISTINCT odoo_analytic_id, analytic_name, account_type
+        FROM analytic_lines
+        WHERE company_id = ${input.companyId}
+          AND account_type IN ('revenue','other_income')
+        GROUP BY odoo_analytic_id
+        ORDER BY SUM(credit-debit) DESC
+        LIMIT 50`).catch(()=>({rows:[]}));
+
+      const all = await db.run(sql`
+        SELECT odoo_analytic_id, name, code FROM analytic_accounts ORDER BY name`).catch(()=>({rows:[]}));
+      const lookup: Record<number,{name:string,code:string}> = {};
+      for (const r of (all as any).rows||[]) {
+        lookup[Number(r.odoo_analytic_id)] = {name:r.name||"",code:r.code||""};
+      }
+
+      return ((rows as any).rows||[]).map((r:any) => ({
+        id: r.odoo_analytic_id,
+        name: lookup[Number(r.odoo_analytic_id)]?.name || r.analytic_name || `مركز ${r.odoo_analytic_id}`,
+        code: lookup[Number(r.odoo_analytic_id)]?.code || "",
+      }));
+    }),
+
   // ── Pre-computed Dashboard Summary (fast) ───────────────────────────────
   dashboardSummary: protectedProcedure
     .input(z.object({ companyId:z.number(), year:z.number() }))

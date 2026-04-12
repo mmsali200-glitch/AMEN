@@ -27,6 +27,7 @@ const NAV = [
     {id:"journal-entries", label:"القيود المحاسبية",      icon:"📋"},
     {id:"general-ledger",  label:"دفتر الأستاذ العام",    icon:"📒"},
     {id:"partner-statement",label:"كشف حساب شريك",        icon:"👤"},
+    {id:"daily-sales",     label:"مبيعات مراكز التكلفة",  icon:"📊"},
   ]},
   { s:"القوائم المالية",  items:[
     {id:"trial-balance",   label:"ميزان المراجعة",        icon:"⚖️"},
@@ -1635,6 +1636,375 @@ function GroupCard({ group, onExpand, expanded, onDelete, onSync, currentUser }:
 }
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 📊 تقرير المبيعات اليومية حسب مراكز التكلفة
+// ══════════════════════════════════════════════════════════════════════════════
+function DailySalesPage({ companyId, co }:any) {
+  const yr  = new Date().getFullYear();
+  const [dF, setDF]         = useState(`${yr}-01-01`);
+  const [dT, setDT]         = useState(`${yr}-12-31`);
+  const [cmpF, setCmpF]     = useState(`${yr-1}-01-01`);
+  const [cmpT, setCmpT]     = useState(`${yr-1}-12-31`);
+  const [showLY, setShowLY] = useState(true);
+  const [filterCenters, setFilterCenters] = useState<string[]>([]);
+  const [maxCols, setMaxCols] = useState(20);
+  const [view, setView]     = useState<"table"|"chart">("table");
+
+  const { data, isLoading } = (trpc as any).journal.dailySalesReport.useQuery({
+    companyId, dateFrom:dF, dateTo:dT,
+    compareFrom: showLY ? cmpF : undefined,
+    compareTo:   showLY ? cmpT : undefined,
+    accountTypes: ["revenue","other_income"],
+  }, { enabled:!!companyId, staleTime:3*60*1000 });
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  const centers: string[]      = (data?.centers || []).slice(0, maxCols);
+  const centerNames: any       = data?.centerNames || {};
+  const dates: string[]        = data?.dates || [];
+  const dateMap: any           = data?.dateMap || {};
+  const mtd: any               = data?.mtdByCtr || {};
+  const dailyTotal: any        = data?.dailyTotal || {};
+  const grandTotal: number     = data?.grandTotal || 0;
+  const compare: any           = data?.compareData || {};
+  const isReal                 = data?.source === "analytic_lines";
+
+  // الفلترة
+  const visibleCenters = filterCenters.length > 0
+    ? centers.filter(c => filterCenters.includes(c))
+    : centers;
+
+  const getDayName = (dateStr:string) => {
+    const days = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+    return days[new Date(dateStr).getDay()] || "";
+  };
+  const getShortDay = (dateStr:string) => {
+    const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    return days[new Date(dateStr).getDay()] || "";
+  };
+
+  // ألوان الهيدر للمراكز
+  const colColors = [
+    "#C2185B","#AD1457","#880E4F",
+    "#00838F","#006064","#004D40",
+    "#1565C0","#0D47A1","#1A237E",
+    "#6A1B9A","#4A148C","#311B92",
+    "#E65100","#BF360C","#870000",
+    "#1B5E20","#2E7D32","#388E3C",
+    "#F57F17","#E65100",
+  ];
+
+  // KPIs
+  const totalCenters = data?.centers?.length || 0;
+  const activeDates  = dates.length;
+  const avgPerDay    = activeDates > 0 ? Math.round(grandTotal / activeDates) : 0;
+  const topCenter    = centers[0];
+  const topCenterName = topCenter ? (centerNames[topCenter]?.name || topCenter) : "—";
+  const topCenterAmt  = topCenter ? (mtd[topCenter] || 0) : 0;
+
+  if (isLoading) return (
+    <div style={{ textAlign:"center", padding:80 }}>
+      <Spinner/>
+      <p style={{ color:C.muted, marginTop:14, fontSize:13 }}>جاري بناء تقرير المبيعات من حركات مراكز التكلفة...</p>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"0 20px 28px", direction:"rtl" }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>📊 تقرير المبيعات اليومية حسب مراكز التكلفة</h2>
+          <div style={{ display:"flex", gap:8, marginTop:5, flexWrap:"wrap" }}>
+            <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
+            <Badge label={isReal?"✅ من analytic_distribution Odoo":"⚠️ من كود الحساب (أعد المزامنة)"}
+              bg={isReal?C.greenLight:C.amberLight} color={isReal?C.green:C.amber}/>
+            {totalCenters > 0 && <Badge label={`${totalCenters} مركز تكلفة`} bg={C.primaryLight} color={C.primary}/>}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {[{k:"table",l:"📋 جدول"},{k:"chart",l:"📊 رسم"}].map(v=>(
+            <button key={v.k} onClick={()=>setView(v.k as any)}
+              style={{ padding:"7px 14px", borderRadius:8, border:`1.5px solid ${view===v.k?C.primary:C.border}`, background:view===v.k?C.primary:"#fff", color:view===v.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:view===v.k?700:400 }}>
+              {v.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <Card style={{ padding:"14px 16px", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>من تاريخ</label>
+            <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          </div>
+          <div>
+            <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>إلى تاريخ</label>
+            <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          </div>
+          <div style={{ display:"flex", gap:6, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+            {["هذا الشهر","هذه السنة","الشهر الماضي"].map((l,i)=>(
+              <button key={i} onClick={()=>{
+                const now = new Date();
+                if (i===0) { setDF(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`); setDT(new Date().toISOString().split("T")[0]); }
+                if (i===1) { setDF(`${now.getFullYear()}-01-01`); setDT(new Date().toISOString().split("T")[0]); }
+                if (i===2) { const m=now.getMonth()===0?12:now.getMonth(); const y=now.getMonth()===0?now.getFullYear()-1:now.getFullYear(); setDF(`${y}-${String(m).padStart(2,"0")}-01`); setDT(`${y}-${String(m).padStart(2,"0")}-28`); }
+              }} style={{ padding:"7px 10px", border:"none", background:"transparent", cursor:"pointer", fontSize:11, color:C.textSec }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <label style={{ display:"flex", gap:6, alignItems:"center", cursor:"pointer", fontSize:12, color:C.textSec }}>
+            <input type="checkbox" checked={showLY} onChange={e=>setShowLY(e.target.checked)} style={{ cursor:"pointer" }}/>
+            مقارنة السنة الماضية
+          </label>
+          {showLY && (
+            <>
+              <div>
+                <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3 }}>LY من</label>
+                <input type="date" value={cmpF} onChange={e=>setCmpF(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+              </div>
+              <div>
+                <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3 }}>LY إلى</label>
+                <input type="date" value={cmpT} onChange={e=>setCmpT(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {/* KPIs */}
+      {data && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+          <KPICard label="إجمالي MTD" value={fmtM(grandTotal)} icon="💰" color={C.primary} bg={C.primaryLight}
+            sub={`${activeDates} يوم نشط`}/>
+          <KPICard label="مراكز التكلفة" value={String(totalCenters)} icon="🎯" color={C.purple} bg={C.purpleLight}
+            sub="نقطة بيع مرتبطة"/>
+          <KPICard label="متوسط يومي" value={fmtM(avgPerDay)} icon="📅" color={C.teal} bg={C.tealLight}
+            sub={`بناءً على ${activeDates} يوم`}/>
+          <KPICard label="أعلى مركز" value={fmtM(topCenterAmt)} icon="🏆" color={C.green} bg={C.greenLight}
+            sub={topCenterName.slice(0,22)}/>
+        </div>
+      )}
+
+      {!data || (!grandTotal && !isLoading) ? (
+        <Card style={{ padding:40, textAlign:"center" }}>
+          <p style={{ fontSize:14, color:C.muted, marginBottom:8 }}>لا توجد بيانات مراكز تكلفة لهذه الفترة</p>
+          <p style={{ fontSize:12, color:C.muted }}>تأكد من وجود حركات محاسبية بها analytic_distribution من Odoo، ثم أعد المزامنة</p>
+        </Card>
+      ) : view === "chart" ? (
+        /* ── Chart View ── */
+        <Card style={{ padding:"20px" }}>
+          <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 16px" }}>📊 أعلى مراكز التكلفة — MTD</p>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {visibleCenters.slice(0,15).map((ctr:string,i:number)=>{
+              const name = centerNames[ctr]?.name || ctr;
+              const code = centerNames[ctr]?.code || "";
+              const amt  = mtd[ctr] || 0;
+              const lyAmt = compare[ctr] || 0;
+              const pct  = grandTotal > 0 ? (amt/grandTotal*100).toFixed(1) : "0";
+              const lyPct = lyAmt > 0 ? Math.round(((amt-lyAmt)/lyAmt)*100) : null;
+              return (
+                <div key={ctr}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                      <div style={{ width:8,height:8,borderRadius:"50%",background:colColors[i%colColors.length],flexShrink:0 }}/>
+                      <span style={{ fontSize:12, color:C.text, fontWeight:600 }}>{name}</span>
+                      {code && <span style={{ fontSize:10, color:C.muted }}>({code})</span>}
+                    </div>
+                    <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                      <span style={{ fontSize:12, color:C.muted }}>{pct}%</span>
+                      {lyAmt > 0 && lyPct !== null && (
+                        <Badge label={`${lyPct>=0?"+":""}${lyPct}% LY`} bg={lyPct>=0?C.greenLight:C.redLight} color={lyPct>=0?C.green:C.red}/>
+                      )}
+                      <span style={{ fontSize:12, fontWeight:800, color:colColors[i%colColors.length], minWidth:60, textAlign:"left" }}>{fmt(amt)}</span>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", background:C.border }}>
+                    <div style={{ width:`${pct}%`, height:"100%", background:colColors[i%colColors.length], borderRadius:5, transition:"width 0.5s" }}/>
+                    {lyAmt > 0 && (
+                      <div style={{ width:`${grandTotal>0?Math.min(100,lyAmt/grandTotal*100):0}%`, height:"100%", background:`${colColors[i%colColors.length]}40`, marginRight:`-${pct}%` }}/>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ) : (
+        /* ── Table View ── */
+        <div>
+          {/* Column count selector */}
+          <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10, flexWrap:"wrap" }}>
+            <span style={{ fontSize:12, color:C.textSec }}>عرض:</span>
+            {[5,10,15,20,centers.length].map(n=>(
+              <button key={n} onClick={()=>setMaxCols(n)}
+                style={{ padding:"4px 10px", borderRadius:6, border:`1px solid ${maxCols===n?C.primary:C.border}`, background:maxCols===n?C.primaryLight:"transparent", color:maxCols===n?C.primary:C.textSec, cursor:"pointer", fontSize:11, fontWeight:maxCols===n?700:400 }}>
+                {n===centers.length?"الكل":n+" مركز"}
+              </button>
+            ))}
+            <span style={{ fontSize:11, color:C.muted, marginRight:"auto" }}>
+              يُعرض {visibleCenters.length} من {centers.length} مركز
+            </span>
+          </div>
+
+          <Card style={{ overflow:"hidden" }}>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ borderCollapse:"collapse", fontSize:11, minWidth:"max-content", width:"100%" }}>
+                <thead>
+                  {/* Row 1: header */}
+                  <tr style={{ background:"#1a237e" }}>
+                    <th style={{ padding:"10px 12px", textAlign:"right", color:"#fff", fontWeight:700, border:"1px solid #283593", minWidth:90, position:"sticky", right:0, zIndex:2, background:"#1a237e" }}>التاريخ</th>
+                    <th style={{ padding:"10px 10px", textAlign:"center", color:"#fff", fontWeight:700, border:"1px solid #283593", minWidth:70, background:"#1a237e" }}>اليوم</th>
+                    {visibleCenters.map((ctr:string,i:number)=>{
+                      const name = centerNames[ctr]?.name || ctr;
+                      const code = centerNames[ctr]?.code || "";
+                      return (
+                        <th key={ctr} style={{ padding:"8px 8px", textAlign:"center", color:"#fff", fontWeight:700, border:"1px solid rgba(255,255,255,0.2)", minWidth:100, background:colColors[i%colColors.length], whiteSpace:"nowrap" }}>
+                          <div style={{ fontSize:11 }}>{name.length>14?name.slice(0,14)+"…":name}</div>
+                          {code && <div style={{ fontSize:9, opacity:0.8 }}>{code}</div>}
+                        </th>
+                      );
+                    })}
+                    <th style={{ padding:"10px 10px", textAlign:"center", color:"#fff", fontWeight:900, border:"1px solid #283593", minWidth:90, background:"#B71C1C" }}>إجمالي اليوم</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dates.map((date:string, di:number) => {
+                    const dayData = dateMap[date] || {};
+                    const dayTot  = dailyTotal[date] || 0;
+                    const isEven  = di % 2 === 0;
+                    return (
+                      <tr key={date} style={{ background:isEven?"#fff":"#F8F9FF" }}
+                        onMouseEnter={e=>(e.currentTarget as any).style.background="#EFF6FF"}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background=isEven?"#fff":"#F8F9FF"}>
+                        <td style={{ padding:"7px 12px", textAlign:"right", color:"#1a237e", fontWeight:600, border:"1px solid #E0E0E0", position:"sticky", right:0, background:isEven?"#fff":"#F8F9FF", zIndex:1, whiteSpace:"nowrap" }}>
+                          {date}
+                        </td>
+                        <td style={{ padding:"7px 8px", textAlign:"center", color:C.textSec, border:"1px solid #E0E0E0" }}>
+                          {getShortDay(date)}
+                        </td>
+                        {visibleCenters.map((ctr:string)=>{
+                          const val = dayData[ctr] || 0;
+                          return (
+                            <td key={ctr} style={{ padding:"7px 10px", textAlign:"center", border:"1px solid #E0E0E0", color:val>0?C.text:C.muted, fontWeight:val>0?600:400 }}>
+                              {val > 0 ? val.toLocaleString("en") : "—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"7px 10px", textAlign:"center", border:"2px solid #E53935", fontWeight:900, color:"#B71C1C", background:"#FFF8F8" }}>
+                          {dayTot > 0 ? dayTot.toLocaleString("en") : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* TOTAL MTD */}
+                  <tr style={{ background:"#E3F2FD", borderTop:"2px solid #1565C0", borderBottom:"2px solid #1565C0" }}>
+                    <td colSpan={2} style={{ padding:"9px 12px", textAlign:"right", color:"#0D47A1", fontWeight:900, border:"1px solid #BBDEFB", fontSize:12, position:"sticky", right:0, background:"#E3F2FD", zIndex:1 }}>
+                      TOTAL MTD
+                    </td>
+                    {visibleCenters.map((ctr:string)=>(
+                      <td key={ctr} style={{ padding:"9px 10px", textAlign:"center", border:"1px solid #BBDEFB", fontWeight:900, color:"#0D47A1" }}>
+                        {(mtd[ctr]||0) > 0 ? (mtd[ctr]||0).toLocaleString("en") : "—"}
+                      </td>
+                    ))}
+                    <td style={{ padding:"9px 10px", textAlign:"center", border:"2px solid #1565C0", fontWeight:900, color:"#0D47A1", fontSize:13 }}>
+                      {grandTotal.toLocaleString("en")}
+                    </td>
+                  </tr>
+
+                  {/* Sales Share % */}
+                  <tr style={{ background:"#E8F5E9" }}>
+                    <td colSpan={2} style={{ padding:"7px 12px", textAlign:"right", color:"#2E7D32", fontWeight:700, border:"1px solid #C8E6C9", fontSize:11, position:"sticky", right:0, background:"#E8F5E9", zIndex:1 }}>
+                      Sales Share %
+                    </td>
+                    {visibleCenters.map((ctr:string)=>{
+                      const pct = grandTotal > 0 ? ((mtd[ctr]||0)/grandTotal*100) : 0;
+                      return (
+                        <td key={ctr} style={{ padding:"7px 10px", textAlign:"center", border:"1px solid #C8E6C9", color:"#2E7D32", fontWeight:700, fontSize:11 }}>
+                          {pct > 0 ? pct.toFixed(0)+"%" : "0%"}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding:"7px 10px", textAlign:"center", border:"1px solid #C8E6C9", color:"#2E7D32", fontWeight:900 }}>100%</td>
+                  </tr>
+
+                  {/* Spacer */}
+                  <tr><td colSpan={visibleCenters.length+3} style={{ padding:4, background:"#fff", border:"none" }}/></tr>
+
+                  {/* Last Year */}
+                  {showLY && Object.keys(compare).length > 0 && (
+                    <>
+                      <tr style={{ background:"#1565C0" }}>
+                        <td colSpan={2} style={{ padding:"8px 12px", textAlign:"right", color:"#fff", fontWeight:700, border:"1px solid #1976D2", position:"sticky", right:0, background:"#1565C0", zIndex:1 }}>
+                          Last Year (LY)
+                        </td>
+                        {visibleCenters.map((ctr:string)=>{
+                          const lyAmt = compare[ctr] || 0;
+                          return (
+                            <td key={ctr} style={{ padding:"8px 10px", textAlign:"center", border:"1px solid #1976D2", color:"#fff", fontWeight:600 }}>
+                              {lyAmt > 0 ? lyAmt.toLocaleString("en") : "—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"8px 10px", textAlign:"center", border:"1px solid #1976D2", color:"#fff", fontWeight:900 }}>
+                          {Object.values(compare as Record<string,number>).reduce((s,v)=>s+v,0).toLocaleString("en")}
+                        </td>
+                      </tr>
+
+                      {/* Remaining LY */}
+                      <tr style={{ background:"#311B92" }}>
+                        <td colSpan={2} style={{ padding:"8px 12px", textAlign:"right", color:"#E8EAF6", fontWeight:700, border:"1px solid #4527A0", position:"sticky", right:0, background:"#311B92", zIndex:1 }}>
+                          Remaining LY
+                        </td>
+                        {visibleCenters.map((ctr:string)=>{
+                          const diff = (mtd[ctr]||0) - (compare[ctr]||0);
+                          return (
+                            <td key={ctr} style={{ padding:"8px 10px", textAlign:"center", border:"1px solid #4527A0", color:diff<0?"#FFCDD2":"#C8E6C9", fontWeight:600 }}>
+                              {diff < 0 ? `(${Math.abs(diff).toLocaleString("en")})` : diff > 0 ? `+${diff.toLocaleString("en")}` : "—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"8px 10px", textAlign:"center", border:"1px solid #4527A0", color:"#FFCDD2", fontWeight:900 }}>
+                          {(()=>{const d = grandTotal - Object.values(compare as Record<string,number>).reduce((s,v)=>s+v,0); return d<0?`(${Math.abs(d).toLocaleString("en")})`:`+${d.toLocaleString("en")}`})()}
+                        </td>
+                      </tr>
+
+                      {/* Remaining % */}
+                      <tr style={{ background:"#4A148C" }}>
+                        <td colSpan={2} style={{ padding:"7px 12px", textAlign:"right", color:"#CE93D8", fontWeight:600, border:"1px solid #6A1B9A", fontSize:11, position:"sticky", right:0, background:"#4A148C", zIndex:1 }}>
+                          Remaining LY %
+                        </td>
+                        {visibleCenters.map((ctr:string)=>{
+                          const ly = compare[ctr] || 0;
+                          const pct = ly > 0 ? Math.round(((mtd[ctr]||0) - ly)/ly*100) : 0;
+                          return (
+                            <td key={ctr} style={{ padding:"7px 10px", textAlign:"center", border:"1px solid #6A1B9A", color:pct<0?"#FFCDD2":"#C8E6C9", fontWeight:600, fontSize:11 }}>
+                              {ly > 0 ? `${pct}%` : "—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ padding:"7px 10px", textAlign:"center", border:"1px solid #6A1B9A", color:"#FFCDD2", fontWeight:700, fontSize:11 }}>
+                          {(()=>{const ly=Object.values(compare as Record<string,number>).reduce((s,v)=>s+v,0); return ly>0?`${Math.round((grandTotal-ly)/ly*100)}%`:"—"})()}
+                        </td>
+                      </tr>
+                    </>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
   const [page, setPage] = useState("dashboard");
   const [open, setOpen] = useState(true);
@@ -3849,6 +4219,7 @@ function ExportPage({ companyId, co }:any) {
       case "journal-entries":   return <JournalEntriesPage companyId={companyId}/>;
       case "general-ledger":    return <GeneralLedgerPage companyId={companyId}/>;
       case "partner-statement": return <PartnerStatementPage companyId={companyId}/>;
+      case "daily-sales":        return <DailySalesPage companyId={companyId} co={co}/>;
       case "executive":         return <ExecutiveDashboardPage companyId={companyId} co={co}/>;
       case "ratios":            return <RatiosPage companyId={companyId}/>;
       case "monthly":           return <MonthlyPage companyId={companyId}/>;
