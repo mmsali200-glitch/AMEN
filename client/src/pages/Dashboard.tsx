@@ -2005,6 +2005,518 @@ function DailySalesPage({ companyId, co }:any) {
 
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎯 نظام الميزانية ومراقبة مراكز التكلفة
+// ══════════════════════════════════════════════════════════════════════════════
+function BudgetMonitorPage({ companyId, co }:any) {
+  const yr  = new Date().getFullYear();
+  const [year, setYear]       = useState(yr);
+  const [activeTab, setTab]   = useState<"monitor"|"targets"|"history"|"analysis">("monitor");
+  const [editTarget, setEdit] = useState<any>(null);
+  const [newTarget, setNewTarget] = useState({
+    analyticId:0, centerName:"", plannedExpenses:0, targetRevenue:0,
+    alertExpPct:80, alertRevPct:70, notes:""
+  });
+  const [showAddForm, setShowAdd] = useState(false);
+  const [monthlyMode, setMonthlyMode] = useState<number|null>(null);
+  const [monthlyData, setMonthlyData] = useState<any[]>([]);
+
+  const { data, isLoading, refetch } = (trpc as any).journal.getCostCenterTargets.useQuery(
+    { companyId, year }, { enabled:!!companyId, staleTime:2*60*1000 }
+  );
+  const { data:alerts } = (trpc as any).journal.getAlertHistory.useQuery(
+    { companyId, limit:50 }, { enabled:!!companyId }
+  );
+  const { data:centers } = (trpc as any).journal.analyticCenterList.useQuery(
+    { companyId }, { enabled:!!companyId }
+  );
+
+  const upsert  = (trpc as any).journal.upsertCostCenterTarget.useMutation({ onSuccess:()=>refetch() });
+  const del     = (trpc as any).journal.deleteCostCenterTarget.useMutation({ onSuccess:()=>refetch() });
+  const markRead= (trpc as any).journal.markAlertRead.useMutation();
+  const recAlert= (trpc as any).journal.recordAlert.useMutation();
+
+  const targets: any[] = data?.targets || [];
+  const totals: any    = data?.totals || {};
+  const histAlerts: any[] = alerts || [];
+  const unread = histAlerts.filter((a:any)=>!a.is_read).length;
+
+  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+
+  const severityColors: Record<string,{bg:string,c:string,border:string,icon:string}> = {
+    ok:       {bg:C.greenLight,  c:C.green,  border:"#A7F3D0", icon:"✅"},
+    info:     {bg:C.primaryLight,c:C.primary,border:C.primarySoft,icon:"ℹ️"},
+    warning:  {bg:C.amberLight,  c:C.amber,  border:"#FDE68A", icon:"⚠️"},
+    exceeded: {bg:C.redLight,    c:C.red,    border:"#FECACA", icon:"🚨"},
+    critical: {bg:C.redLight,    c:C.red,    border:"#FECACA", icon:"❌"},
+  };
+  const matrixColors: Record<string,{bg:string,c:string,label:string,icon:string}> = {
+    excellent: {bg:C.greenLight,  c:C.green,  label:"ممتاز",          icon:"✅"},
+    rev_needed:{bg:C.amberLight,  c:C.amber,  label:"تحسين إيرادات",  icon:"⚠️"},
+    monitor:   {bg:"#FFF3E0",     c:"#E65100",label:"مراقبة",         icon:"🟠"},
+    danger:    {bg:C.redLight,    c:C.red,    label:"خطر",            icon:"🔴"},
+  };
+
+  // تلقائياً سجّل التنبيهات عند التحميل
+  useEffect(()=>{
+    if (!targets.length || !companyId) return;
+    targets.forEach((t:any)=>{
+      if (t.expStatus==="exceeded") {
+        recAlert.mutate({ companyId, analyticId:t.analyticId, centerName:t.centerName, alertType:"expenses", severity:"emergency", message:`تجاوز ميزانية المصروفات ${t.expPct.toFixed(0)}%`, actualValue:t.actualExpenses, plannedValue:t.plannedExpenses, pctUsed:t.expPct });
+      }
+    });
+  },[targets.length]);
+
+  // توزيع شهري متساوٍ
+  const distributeEqual = (annual: number) =>
+    Array.from({length:12},(_,i)=>({ month:i+1, expenses:Math.round(annual/12), revenue:Math.round(annual/12) }));
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎯 مراقبة الميزانية ومراكز التكلفة</h2>
+          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+            <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
+            <Badge label={`سنة ${year}`} bg={C.primaryLight} color={C.primary}/>
+            {unread > 0 && <Badge label={`🔔 ${unread} تنبيه جديد`} bg={C.redLight} color={C.red}/>}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          <select value={year} onChange={e=>setYear(Number(e.target.value))} style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12 }}>
+            {[yr-1,yr,yr+1].map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+          {activeTab==="targets" && (
+            <button onClick={()=>setShowAdd(!showAddForm)}
+              style={{ padding:"7px 14px", borderRadius:8, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
+              + إضافة هدف
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", gap:4, marginBottom:16, borderBottom:`2px solid ${C.border}`, paddingBottom:0 }}>
+        {[
+          {k:"monitor",  l:"📊 لوحة المراقبة"},
+          {k:"targets",  l:"🎯 الأهداف والمستهدفات"},
+          {k:"analysis", l:"📈 تحليل الانحراف"},
+          {k:"history",  l:`🔔 سجل التنبيهات${unread>0?` (${unread})`:""}`},
+        ].map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k as any)}
+            style={{ padding:"9px 18px", border:"none", borderBottom:`2.5px solid ${activeTab===t.k?C.primary:"transparent"}`, background:"transparent", color:activeTab===t.k?C.primary:C.textSec, cursor:"pointer", fontSize:12, fontWeight:activeTab===t.k?800:400, marginBottom:-2 }}>
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {isLoading && <div style={{ textAlign:"center", padding:60 }}><Spinner/><p style={{ color:C.muted, marginTop:12 }}>جاري مقارنة البيانات الفعلية بالأهداف...</p></div>}
+
+      {/* ── MONITOR TAB ── */}
+      {activeTab==="monitor" && !isLoading && (
+        <>
+          {/* KPIs */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:16 }}>
+            {[
+              {l:"المصروفات المخططة",   v:fmtM(totals.plannedExp||0), sub:`فعلي: ${fmtM(totals.actualExp||0)}`,  icon:"💸", c:C.red,     bg:C.redLight},
+              {l:"الإيرادات المستهدفة", v:fmtM(totals.targetRev||0), sub:`فعلي: ${fmtM(totals.actualRev||0)}`,   icon:"💰", c:C.primary, bg:C.primaryLight},
+              {l:"مراكز تجاوزت الميزانية", v:String(totals.exceeded||0), sub:"تحتاج تدخل فوري",                icon:"🚨", c:C.red,     bg:C.redLight},
+              {l:"مراكز قاصرة الإيرادات", v:String(totals.revMissed||0), sub:"لم تحقق المستهدف",               icon:"⚠️", c:C.amber,   bg:C.amberLight},
+            ].map((s,i)=>(
+              <Card key={i} style={{ padding:"14px 16px", background:s.bg, border:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <div>
+                    <p style={{ fontSize:10, color:C.textSec, margin:"0 0 4px" }}>{s.l}</p>
+                    <p style={{ fontSize:18, fontWeight:900, color:s.c, margin:"0 0 3px" }}>{s.v}</p>
+                    <p style={{ fontSize:10, color:C.muted, margin:0 }}>{s.sub}</p>
+                  </div>
+                  <span style={{ fontSize:22 }}>{s.icon}</span>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {/* Performance Matrix */}
+          {targets.length > 0 && (
+            <Card style={{ padding:"18px 20px", marginBottom:14 }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📊 مصفوفة الأداء</p>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                {Object.entries(matrixColors).map(([key,mc])=>{
+                  const count = targets.filter((t:any)=>t.matrix===key).length;
+                  return (
+                    <div key={key} style={{ padding:"12px 16px", borderRadius:10, background:mc.bg, border:`1px solid ${mc.c}30`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                        <span style={{ fontSize:16 }}>{mc.icon}</span>
+                        <span style={{ fontSize:12, color:mc.c, fontWeight:700 }}>{mc.label}</span>
+                      </div>
+                      <span style={{ fontSize:22, fontWeight:900, color:mc.c }}>{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {Object.entries(matrixColors).map(([key,mc])=>(
+                  <div key={key} style={{ display:"flex", gap:4, alignItems:"center" }}>
+                    <div style={{ width:8,height:8,borderRadius:"50%",background:mc.c }}/><span style={{ fontSize:10, color:C.muted }}>{mc.label}: {targets.filter((t:any)=>t.matrix===key).length}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Top centers progress */}
+          {targets.length === 0 ? (
+            <Card style={{ padding:40, textAlign:"center" }}>
+              <p style={{ fontSize:16, color:C.muted, marginBottom:8 }}>لا توجد أهداف محددة لسنة {year}</p>
+              <p style={{ fontSize:12, color:C.muted, marginBottom:16 }}>ابدأ بإضافة أهداف المصروفات والإيرادات لكل مركز تكلفة</p>
+              <button onClick={()=>setTab("targets")} style={{ padding:"9px 20px", borderRadius:9, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                + إضافة أهداف الآن
+              </button>
+            </Card>
+          ) : (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+              {/* Expenses */}
+              <Card style={{ padding:"18px 20px" }}>
+                <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>💸 استهلاك ميزانية المصروفات</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  {targets.slice(0,8).map((t:any,i:number)=>{
+                    const sc = severityColors[t.expStatus]||severityColors.ok;
+                    return (
+                      <div key={i}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                          <span style={{ fontSize:11, color:C.text, fontWeight:600 }}>{t.centerName.slice(0,22)}</span>
+                          <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                            <span style={{ fontSize:11, color:sc.c, fontWeight:700 }}>{t.expPct.toFixed(0)}%</span>
+                            <Badge label={sc.icon+" "+t.expStatus} bg={sc.bg} color={sc.c}/>
+                          </div>
+                        </div>
+                        <div style={{ background:C.border, borderRadius:5, height:8, overflow:"hidden" }}>
+                          <div style={{ width:`${Math.min(100,t.expPct)}%`, height:"100%", background:sc.c, borderRadius:5, transition:"width 0.5s" }}/>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+                          <span style={{ fontSize:9, color:C.muted }}>فعلي: {fmtM(t.actualExpenses)}</span>
+                          <span style={{ fontSize:9, color:C.muted }}>مخطط: {fmtM(t.plannedExpenses)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+              {/* Revenue */}
+              <Card style={{ padding:"18px 20px" }}>
+                <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>💰 تحقيق مستهدفات الإيرادات</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  {targets.filter((t:any)=>t.targetRevenue>0).slice(0,8).map((t:any,i:number)=>{
+                    const color = t.revPct>=100?C.green:t.revPct>=70?C.amber:C.red;
+                    return (
+                      <div key={i}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                          <span style={{ fontSize:11, color:C.text, fontWeight:600 }}>{t.centerName.slice(0,22)}</span>
+                          <span style={{ fontSize:11, color, fontWeight:700 }}>{t.revPct.toFixed(0)}%</span>
+                        </div>
+                        <div style={{ background:C.border, borderRadius:5, height:8, overflow:"hidden" }}>
+                          <div style={{ width:`${Math.min(100,t.revPct)}%`, height:"100%", background:color, borderRadius:5 }}/>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+                          <span style={{ fontSize:9, color:C.muted }}>فعلي: {fmtM(t.actualRevenue)}</span>
+                          <span style={{ fontSize:9, color:C.muted }}>هدف: {fmtM(t.targetRevenue)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {targets.filter((t:any)=>t.targetRevenue===0).length > 0 && (
+                    <p style={{ fontSize:11, color:C.muted, textAlign:"center", marginTop:8 }}>
+                      {targets.filter((t:any)=>t.targetRevenue===0).length} مركز بدون مستهدف إيرادات
+                    </p>
+                  )}
+                </div>
+              </Card>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── TARGETS TAB ── */}
+      {activeTab==="targets" && (
+        <>
+          {/* Add form */}
+          {showAddForm && (
+            <Card style={{ padding:"18px 20px", marginBottom:14, border:`2px solid ${C.primary}` }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.primary, margin:"0 0 14px" }}>+ إضافة هدف مركز تكلفة جديد</p>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:12 }}>
+                {[
+                  {l:"مركز التكلفة / المشروع",w:"2/3"},
+                  {l:"المعرف التحليلي في Odoo"},
+                  {l:"المصروفات المخططة"},
+                  {l:"الإيرادات المستهدفة"},
+                  {l:"نسبة تنبيه المصروفات %"},
+                  {l:"نسبة تنبيه الإيرادات %"},
+                ].map((_,i)=>(
+                  <div key={i}>
+                    <label style={{ display:"block", fontSize:10, color:C.muted, marginBottom:3, fontWeight:600 }}>{
+                      ["اسم مركز التكلفة","المعرف التحليلي Odoo","المصروفات المخططة","الإيرادات المستهدفة","تنبيه مصروفات %","تنبيه إيرادات %"][i]
+                    }</label>
+                    <input
+                      type={i>1?"number":"text"}
+                      placeholder={["جاسم الغانم - مقاولات","1459","500,000","800,000","80","70"][i]}
+                      value={[newTarget.centerName,String(newTarget.analyticId||""),String(newTarget.plannedExpenses||""),String(newTarget.targetRevenue||""),String(newTarget.alertExpPct),String(newTarget.alertRevPct)][i]}
+                      onChange={e=>{
+                        const v = e.target.value;
+                        const keys = ["centerName","analyticId","plannedExpenses","targetRevenue","alertExpPct","alertRevPct"];
+                        setNewTarget(p=>({...p, [keys[i]]: i>1?Number(v)||0:v}));
+                      }}
+                      style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={()=>{
+                  upsert.mutate({ companyId, ...newTarget, year, monthlyTargets: distributeEqual(newTarget.plannedExpenses).map(m=>({...m, revenue:Math.round(newTarget.targetRevenue/12)})) });
+                  setShowAdd(false);
+                  setNewTarget({analyticId:0,centerName:"",plannedExpenses:0,targetRevenue:0,alertExpPct:80,alertRevPct:70,notes:""});
+                }} style={{ padding:"8px 18px", borderRadius:8, border:"none", background:C.primary, color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
+                  حفظ وتوزيع شهري متساوٍ
+                </button>
+                <button onClick={()=>setShowAdd(false)} style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.textSec, cursor:"pointer", fontSize:12 }}>
+                  إلغاء
+                </button>
+              </div>
+            </Card>
+          )}
+
+          {/* Targets table */}
+          <Card style={{ overflow:"hidden" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  {["المركز","المصروفات المخططة","الإيرادات المستهدفة","تنبيه مصروفات","تنبيه إيرادات","توزيع شهري","إجراءات"].map(h=>(
+                    <th key={h} style={{ padding:"10px 12px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap", fontSize:10 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {targets.length === 0 ? (
+                  <tr><td colSpan={7} style={{ padding:30, textAlign:"center", color:C.muted }}>لا توجد أهداف — اضغط "+ إضافة هدف"</td></tr>
+                ) : targets.map((t:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"9px 12px", fontWeight:700, color:C.text }}>{t.centerName}</td>
+                    <td style={{ padding:"9px 12px", color:C.red }}>
+                      {editTarget?.id===t.id ? (
+                        <input type="number" value={editTarget.plannedExpenses} onChange={e=>setEdit({...editTarget,plannedExpenses:Number(e.target.value)})}
+                          style={{ width:90, padding:"4px 6px", borderRadius:6, border:`1px solid ${C.border}`, fontSize:11 }}/>
+                      ) : fmt(t.plannedExpenses)}
+                    </td>
+                    <td style={{ padding:"9px 12px", color:C.primary }}>
+                      {editTarget?.id===t.id ? (
+                        <input type="number" value={editTarget.targetRevenue} onChange={e=>setEdit({...editTarget,targetRevenue:Number(e.target.value)})}
+                          style={{ width:90, padding:"4px 6px", borderRadius:6, border:`1px solid ${C.border}`, fontSize:11 }}/>
+                      ) : fmt(t.targetRevenue)}
+                    </td>
+                    <td style={{ padding:"9px 12px" }}>
+                      {editTarget?.id===t.id ? (
+                        <input type="number" value={editTarget.alertExpPct} onChange={e=>setEdit({...editTarget,alertExpPct:Number(e.target.value)})}
+                          style={{ width:55, padding:"4px 6px", borderRadius:6, border:`1px solid ${C.border}`, fontSize:11 }}/>
+                      ) : <Badge label={`${t.alertExpPct}%`} bg={C.amberLight} color={C.amber}/>}
+                    </td>
+                    <td style={{ padding:"9px 12px" }}>
+                      {editTarget?.id===t.id ? (
+                        <input type="number" value={editTarget.alertRevPct} onChange={e=>setEdit({...editTarget,alertRevPct:Number(e.target.value)})}
+                          style={{ width:55, padding:"4px 6px", borderRadius:6, border:`1px solid ${C.border}`, fontSize:11 }}/>
+                      ) : <Badge label={`${t.alertRevPct}%`} bg={C.primaryLight} color={C.primary}/>}
+                    </td>
+                    <td style={{ padding:"9px 12px" }}>
+                      <button onClick={()=>{ setMonthlyMode(t.id); setMonthlyData(t.monthly.length>0?t.monthly:distributeEqual(t.plannedExpenses).map((m:any)=>({...m,revenue:Math.round(t.targetRevenue/12)}))); }}
+                        style={{ padding:"4px 10px", borderRadius:6, border:`1px solid ${C.border}`, background:C.bg, cursor:"pointer", fontSize:10, color:C.primary }}>
+                        ⚙️ {t.monthly.length>0?"عرض":"ضبط"}
+                      </button>
+                    </td>
+                    <td style={{ padding:"9px 12px" }}>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {editTarget?.id===t.id ? (
+                          <>
+                            <button onClick={()=>{ upsert.mutate({companyId,...editTarget,year}); setEdit(null); }}
+                              style={{ padding:"4px 8px", borderRadius:6, border:"none", background:C.green, color:"#fff", cursor:"pointer", fontSize:10 }}>حفظ</button>
+                            <button onClick={()=>setEdit(null)} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`, background:"transparent", cursor:"pointer", fontSize:10 }}>إلغاء</button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={()=>setEdit({...t})} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`, background:C.bg, cursor:"pointer", fontSize:10 }}>✏️</button>
+                            <button onClick={()=>{ if(confirm("حذف هذا الهدف؟")) del.mutate({companyId, analyticId:t.analyticId, year}); }}
+                              style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${C.redLight}`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:10 }}>🗑️</button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+
+          {/* Monthly breakdown modal */}
+          {monthlyMode !== null && (
+            <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,direction:"rtl" }}
+              onClick={()=>setMonthlyMode(null)}>
+              <div onClick={e=>e.stopPropagation()} style={{ background:C.surface,borderRadius:16,padding:24,maxWidth:540,width:"94%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",marginBottom:16 }}>
+                  <p style={{ fontWeight:800,fontSize:15,color:C.text,margin:0 }}>التوزيع الشهري</p>
+                  <div style={{ display:"flex",gap:6 }}>
+                    <button onClick={()=>{
+                      const t = targets.find((x:any)=>x.id===monthlyMode);
+                      if (t) setMonthlyData(distributeEqual(t.plannedExpenses).map((m:any)=>({...m,revenue:Math.round(t.targetRevenue/12)})));
+                    }} style={{ padding:"5px 12px",borderRadius:7,border:`1px solid ${C.border}`,background:C.bg,cursor:"pointer",fontSize:11 }}>
+                      توزيع متساوٍ
+                    </button>
+                    <button onClick={()=>setMonthlyMode(null)} style={{ padding:"5px 10px",borderRadius:7,border:"none",background:"transparent",cursor:"pointer",fontSize:18,color:C.muted }}>×</button>
+                  </div>
+                </div>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+                  <thead>
+                    <tr style={{ background:C.primaryLight }}>
+                      {["الشهر","المصروفات المخططة","الإيرادات المستهدفة"].map(h=>(
+                        <th key={h} style={{ padding:"8px 12px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}` }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({length:12},(_,i)=>{
+                      const m = monthlyData.find((x:any)=>x.month===i+1) || {month:i+1,planned_expenses:0,target_revenue:0};
+                      return (
+                        <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
+                          <td style={{ padding:"7px 12px",fontWeight:600,color:C.textSec }}>{arM[i]}</td>
+                          <td style={{ padding:"7px 12px" }}>
+                            <input type="number" value={m.planned_expenses||m.expenses||0}
+                              onChange={e=>setMonthlyData(prev=>{ const n=[...prev]; const idx=n.findIndex(x=>x.month===i+1); if(idx>=0)n[idx]={...n[idx],expenses:Number(e.target.value),planned_expenses:Number(e.target.value)}; else n.push({month:i+1,expenses:Number(e.target.value),planned_expenses:Number(e.target.value),revenue:0,target_revenue:0}); return n; })}
+                              style={{ width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11 }}/>
+                          </td>
+                          <td style={{ padding:"7px 12px" }}>
+                            <input type="number" value={m.target_revenue||m.revenue||0}
+                              onChange={e=>setMonthlyData(prev=>{ const n=[...prev]; const idx=n.findIndex(x=>x.month===i+1); if(idx>=0)n[idx]={...n[idx],revenue:Number(e.target.value),target_revenue:Number(e.target.value)}; else n.push({month:i+1,expenses:0,planned_expenses:0,revenue:Number(e.target.value),target_revenue:Number(e.target.value)}); return n; })}
+                              style={{ width:"100%",padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11 }}/>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ background:C.primaryLight,borderTop:`2px solid ${C.primary}` }}>
+                      <td style={{ padding:"9px 12px",fontWeight:800,color:C.primary }}>المجموع</td>
+                      <td style={{ padding:"9px 12px",fontWeight:800,color:C.red }}>{fmt(monthlyData.reduce((s:number,m:any)=>s+(m.planned_expenses||m.expenses||0),0))}</td>
+                      <td style={{ padding:"9px 12px",fontWeight:800,color:C.primary }}>{fmt(monthlyData.reduce((s:number,m:any)=>s+(m.target_revenue||m.revenue||0),0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style={{ marginTop:14,display:"flex",gap:8 }}>
+                  <button onClick={()=>{
+                    const t = targets.find((x:any)=>x.id===monthlyMode);
+                    if (t) upsert.mutate({companyId,analyticId:t.analyticId,centerName:t.centerName,year,plannedExpenses:t.plannedExpenses,targetRevenue:t.targetRevenue,alertExpPct:t.alertExpPct,alertRevPct:t.alertRevPct,monthlyTargets:monthlyData.map(m=>({month:m.month,expenses:m.planned_expenses||m.expenses||0,revenue:m.target_revenue||m.revenue||0}))});
+                    setMonthlyMode(null);
+                  }} style={{ flex:1,padding:"9px",borderRadius:8,border:"none",background:C.primary,color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700 }}>
+                    حفظ التوزيع الشهري
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── ANALYSIS TAB ── */}
+      {activeTab==="analysis" && (
+        <Card style={{ overflow:"hidden" }}>
+          <div style={{ padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:0 }}>📈 تحليل الانحراف — Variance Analysis</p>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:700 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  {["المركز","إيرادات مخططة","إيرادات فعلية","انحراف إيرادات","مصروفات مخططة","مصروفات فعلية","انحراف مصروفات","ربح مخطط","ربح فعلي","انحراف الربح","تنبؤ نهاية السنة"].map(h=>(
+                    <th key={h} style={{ padding:"9px 10px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,whiteSpace:"nowrap",fontSize:10 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {targets.length===0 ? (
+                  <tr><td colSpan={11} style={{ padding:24,textAlign:"center",color:C.muted }}>لا توجد أهداف لعرض تحليل الانحراف</td></tr>
+                ) : targets.map((t:any,i:number)=>{
+                  const varRev  = t.actualRevenue - t.targetRevenue;
+                  const varExp  = t.actualExpenses - t.plannedExpenses;
+                  const varProf = t.netProfit - t.plannedProfit;
+                  return (
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
+                      <td style={{ padding:"8px 10px",fontWeight:700,color:C.text }}>{t.centerName}</td>
+                      <td style={{ padding:"8px 10px",color:C.muted }}>{t.targetRevenue>0?fmt(t.targetRevenue):"—"}</td>
+                      <td style={{ padding:"8px 10px",color:C.primary,fontWeight:600 }}>{fmt(t.actualRevenue)}</td>
+                      <td style={{ padding:"8px 10px" }}><span style={{ color:varRev>=0?C.green:C.red,fontWeight:700 }}>{varRev>=0?"+":""}{fmtM(varRev)}</span></td>
+                      <td style={{ padding:"8px 10px",color:C.muted }}>{t.plannedExpenses>0?fmt(t.plannedExpenses):"—"}</td>
+                      <td style={{ padding:"8px 10px",color:C.red,fontWeight:600 }}>{fmt(t.actualExpenses)}</td>
+                      <td style={{ padding:"8px 10px" }}><span style={{ color:varExp<=0?C.green:C.red,fontWeight:700 }}>{varExp>=0?"+":""}{fmtM(varExp)}</span></td>
+                      <td style={{ padding:"8px 10px",color:C.muted }}>{fmt(t.plannedProfit)}</td>
+                      <td style={{ padding:"8px 10px",fontWeight:700,color:t.netProfit>=0?C.green:C.red }}>{fmt(t.netProfit)}</td>
+                      <td style={{ padding:"8px 10px" }}><span style={{ color:varProf>=0?C.green:C.red,fontWeight:700 }}>{varProf>=0?"+":""}{fmtM(varProf)}</span></td>
+                      <td style={{ padding:"8px 10px" }}>
+                        {t.forecastExp>0&&<div><div style={{ fontSize:10,color:C.red }}>مصر: {fmtM(t.forecastExp)}</div><div style={{ fontSize:10,color:C.primary }}>إير: {fmtM(t.forecastRev)}</div></div>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ── HISTORY TAB ── */}
+      {activeTab==="history" && (
+        <>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12 }}>
+            <p style={{ fontSize:13,color:C.textSec,margin:0 }}>{histAlerts.length} تنبيه في السجل</p>
+            <button onClick={()=>markRead.mutate({companyId})} style={{ padding:"6px 14px",borderRadius:7,border:`1px solid ${C.border}`,background:C.bg,cursor:"pointer",fontSize:11,color:C.textSec }}>
+              ✓ تحديد الكل كمقروء
+            </button>
+          </div>
+          {histAlerts.length===0 ? (
+            <Card style={{ padding:30,textAlign:"center" }}><p style={{ color:C.muted }}>لا توجد تنبيهات مسجلة بعد</p></Card>
+          ) : (
+            <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+              {histAlerts.map((a:any,i:number)=>{
+                const sc = severityColors[a.severity]||severityColors.info;
+                return (
+                  <div key={i} style={{ padding:"12px 16px",borderRadius:10,background:a.is_read?"#F8FAFF":sc.bg,border:`1px solid ${a.is_read?C.border:sc.border}`,display:"flex",gap:12,alignItems:"flex-start",transition:"background 0.2s" }}>
+                    <span style={{ fontSize:18,flexShrink:0 }}>{sc.icon}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}>
+                        <span style={{ fontSize:12,fontWeight:700,color:a.is_read?C.textSec:sc.c }}>{a.center_name}</span>
+                        <span style={{ fontSize:10,color:C.muted }}>{String(a.created_at).split("T")[0]}</span>
+                      </div>
+                      <p style={{ fontSize:12,color:C.textSec,margin:0 }}>{a.message}</p>
+                      {a.pct_used > 0 && (
+                        <div style={{ marginTop:6,height:4,background:C.border,borderRadius:2,overflow:"hidden",width:120 }}>
+                          <div style={{ width:`${Math.min(100,a.pct_used)}%`,height:"100%",background:sc.c,borderRadius:2 }}/>
+                        </div>
+                      )}
+                    </div>
+                    {!a.is_read && (
+                      <button onClick={()=>markRead.mutate({companyId,alertId:a.id})} style={{ padding:"4px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"#fff",cursor:"pointer",fontSize:10,flexShrink:0 }}>
+                        قراءة
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
   const [page, setPage] = useState("dashboard");
   const [open, setOpen] = useState(true);
@@ -4230,6 +4742,7 @@ function ExportPage({ companyId, co }:any) {
       case "multi-company":     return <MultiCompanyPage currentUser={user}/>;
       case "analytic":          return <AnalyticCentersPage companyId={companyId} co={co}/>;
       case "aging":             return <AgingReportPage companyId={companyId} co={co}/>;
+      case "budget-monitor":    return <BudgetMonitorPage companyId={companyId} co={co}/>;;
       case "advanced":          return <AdvancedAnalysisPage companyId={companyId} co={co}/>;
       case "export":            return <ExportPage companyId={companyId} co={co}/>;
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;

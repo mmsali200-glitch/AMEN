@@ -708,6 +708,206 @@ const journalRouter = router({
       return { lines };
     }),
 
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🎯 نظام تنبيهات الميزانية ومراكز التكلفة
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // إنشاء/تحديث هدف مركز تكلفة
+  upsertCostCenterTarget: protectedProcedure
+    .input(z.object({
+      companyId:        z.number(),
+      analyticId:       z.number(),
+      centerName:       z.string(),
+      year:             z.number(),
+      plannedExpenses:  z.number().default(0),
+      targetRevenue:    z.number().default(0),
+      alertExpPct:      z.number().default(80),
+      alertRevPct:      z.number().default(70),
+      notes:            z.string().optional(),
+      monthlyTargets:   z.array(z.object({ month:z.number(), expenses:z.number(), revenue:z.number() })).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`CREATE TABLE IF NOT EXISTS cost_center_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL, analytic_id INTEGER NOT NULL,
+        center_name TEXT NOT NULL, year INTEGER NOT NULL,
+        planned_expenses REAL DEFAULT 0, target_revenue REAL DEFAULT 0,
+        alert_exp_pct REAL DEFAULT 80, alert_rev_pct REAL DEFAULT 70,
+        notes TEXT, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(company_id, analytic_id, year))`).catch(()=>{});
+      await db.run(sql`CREATE TABLE IF NOT EXISTS cost_center_monthly_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, target_id INTEGER NOT NULL,
+        month INTEGER NOT NULL, planned_expenses REAL DEFAULT 0, target_revenue REAL DEFAULT 0,
+        UNIQUE(target_id, month))`).catch(()=>{});
+      await db.run(sql`CREATE TABLE IF NOT EXISTS budget_alert_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL,
+        analytic_id INTEGER, center_name TEXT, alert_type TEXT, severity TEXT,
+        message TEXT, actual_value REAL, planned_value REAL, pct_used REAL,
+        channel TEXT DEFAULT 'in-app', is_read INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')))`).catch(()=>{});
+
+      await db.run(sql`INSERT OR REPLACE INTO cost_center_targets
+        (company_id, analytic_id, center_name, year, planned_expenses, target_revenue, alert_exp_pct, alert_rev_pct, notes, is_active)
+        VALUES (${input.companyId}, ${input.analyticId}, ${input.centerName}, ${input.year},
+                ${input.plannedExpenses}, ${input.targetRevenue}, ${input.alertExpPct}, ${input.alertRevPct},
+                ${input.notes||""}, 1)`);
+
+      if (input.monthlyTargets?.length) {
+        const idRes = await db.run(sql`SELECT id FROM cost_center_targets WHERE company_id=${input.companyId} AND analytic_id=${input.analyticId} AND year=${input.year} LIMIT 1`);
+        const tid = (idRes as any).rows?.[0]?.id;
+        if (tid) {
+          for (const m of input.monthlyTargets) {
+            await db.run(sql`INSERT OR REPLACE INTO cost_center_monthly_targets (target_id, month, planned_expenses, target_revenue) VALUES (${tid}, ${m.month}, ${m.expenses}, ${m.revenue})`);
+          }
+        }
+      }
+      return { success: true };
+    }),
+
+  // حذف هدف
+  deleteCostCenterTarget: protectedProcedure
+    .input(z.object({ companyId:z.number(), analyticId:z.number(), year:z.number() }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`DELETE FROM cost_center_targets WHERE company_id=${input.companyId} AND analytic_id=${input.analyticId} AND year=${input.year}`);
+      return { success: true };
+    }),
+
+  // قائمة الأهداف مع الأداء الفعلي
+  getCostCenterTargets: protectedProcedure
+    .input(z.object({ companyId:z.number(), year:z.number() }))
+    .query(async ({ input }) => {
+      await db.run(sql`CREATE TABLE IF NOT EXISTS cost_center_targets (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, analytic_id INTEGER NOT NULL, center_name TEXT NOT NULL, year INTEGER NOT NULL, planned_expenses REAL DEFAULT 0, target_revenue REAL DEFAULT 0, alert_exp_pct REAL DEFAULT 80, alert_rev_pct REAL DEFAULT 70, notes TEXT, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now')), UNIQUE(company_id, analytic_id, year))`).catch(()=>{});
+
+      const targets = await db.run(sql`
+        SELECT t.*, GROUP_CONCAT(m.month||':'||m.planned_expenses||':'||m.target_revenue) as monthly_data
+        FROM cost_center_targets t
+        LEFT JOIN cost_center_monthly_targets m ON m.target_id = t.id
+        WHERE t.company_id = ${input.companyId} AND t.year = ${input.year} AND t.is_active = 1
+        GROUP BY t.id ORDER BY t.planned_expenses DESC`).catch(()=>({rows:[]}));
+
+      const dF = `${input.year}-01-01`, dT = `${input.year}-12-31`;
+
+      // جلب الأداء الفعلي من analytic_lines
+      const actuals = await db.run(sql`
+        SELECT odoo_analytic_id, account_type,
+               SUM(credit-debit) as amount
+        FROM analytic_lines
+        WHERE company_id=${input.companyId} AND date>=${dF} AND date<=${dT}
+        GROUP BY odoo_analytic_id, account_type`).catch(()=>({rows:[]}));
+
+      const actualsMap: Record<number, {rev:number, exp:number}> = {};
+      for (const r of (actuals as any).rows||[]) {
+        const id = Number(r.odoo_analytic_id);
+        if (!actualsMap[id]) actualsMap[id] = {rev:0, exp:0};
+        if (r.account_type==="revenue"||r.account_type==="other_income") actualsMap[id].rev += Number(r.amount)||0;
+        else if (r.account_type==="expenses"||r.account_type==="cogs") actualsMap[id].exp += Math.abs(Number(r.amount)||0);
+      }
+
+      // fallback من journal_entry_lines إذا لا توجد analytic_lines
+      if (Object.keys(actualsMap).length === 0) {
+        const fbActuals = await db.run(sql`
+          SELECT jl.account_code as analytic_id, jl.account_type,
+                 SUM(jl.credit-jl.debit) as amount
+          FROM journal_entry_lines jl
+          LEFT JOIN journal_entries je ON je.id=jl.journal_entry_id
+          WHERE jl.company_id=${input.companyId} AND jl.date>=${dF} AND jl.date<=${dT}
+            AND (je.name IS NULL OR je.name!='رصيد افتتاحي')
+          GROUP BY jl.account_code, jl.account_type`).catch(()=>({rows:[]}));
+        for (const r of (fbActuals as any).rows||[]) {
+          const id = Number(r.analytic_id)||0;
+          if (!actualsMap[id]) actualsMap[id] = {rev:0, exp:0};
+          if (r.account_type==="revenue"||r.account_type==="other_income") actualsMap[id].rev += Number(r.amount)||0;
+          else if (r.account_type==="expenses"||r.account_type==="cogs") actualsMap[id].exp += Math.abs(Number(r.amount)||0);
+        }
+      }
+
+      const results = ((targets as any).rows||[]).map((t:any) => {
+        const actual = actualsMap[Number(t.analytic_id)] || {rev:0, exp:0};
+        const expPct = t.planned_expenses > 0 ? (actual.exp / t.planned_expenses * 100) : 0;
+        const revPct = t.target_revenue > 0 ? (actual.rev / t.target_revenue * 100) : 0;
+
+        // مستوى التنبيه
+        let expStatus = "ok", revStatus = "ok";
+        if (expPct >= 100) expStatus = "exceeded";
+        else if (expPct >= (t.alert_exp_pct||80)) expStatus = "warning";
+        else if (expPct >= 50) expStatus = "info";
+        if (revPct < 50 && t.target_revenue > 0) revStatus = "warning";
+        if (revPct < 30 && t.target_revenue > 0) revStatus = "critical";
+
+        // تنبؤ بنهاية السنة
+        const dayOfYear = Math.ceil((new Date().getTime() - new Date(`${input.year}-01-01`).getTime()) / 86400000);
+        const yearProgress = dayOfYear / 365;
+        const forecastExp = yearProgress > 0 ? actual.exp / yearProgress : 0;
+        const forecastRev = yearProgress > 0 ? actual.rev / yearProgress : 0;
+
+        // أداء مصفوفة
+        const matrix = expStatus !== "exceeded" && revPct >= 100 ? "excellent"
+          : expStatus !== "exceeded" && revPct < 100 ? "rev_needed"
+          : expStatus === "exceeded" && revPct >= 100 ? "monitor"
+          : "danger";
+
+        // Monthly parse
+        const monthly = (t.monthly_data||"").split(",").filter(Boolean).map((s:string)=>{
+          const [m, pe, tr] = s.split(":");
+          return { month:Number(m), planned_expenses:Number(pe), target_revenue:Number(tr) };
+        });
+
+        return {
+          id: t.id, analyticId: t.analytic_id, centerName: t.center_name, year: t.year,
+          plannedExpenses: t.planned_expenses, targetRevenue: t.target_revenue,
+          alertExpPct: t.alert_exp_pct, alertRevPct: t.alert_rev_pct, notes: t.notes,
+          actualExpenses: actual.exp, actualRevenue: actual.rev,
+          expPct: Math.round(expPct*10)/10, revPct: Math.round(revPct*10)/10,
+          expStatus, revStatus, matrix,
+          forecastExp: Math.round(forecastExp), forecastRev: Math.round(forecastRev),
+          varExp: actual.exp - t.planned_expenses, varRev: actual.rev - t.target_revenue,
+          netProfit: actual.rev - actual.exp, plannedProfit: t.target_revenue - t.planned_expenses,
+          monthly,
+        };
+      });
+
+      // إجماليات
+      const totals = results.reduce((s:any, r:any) => ({
+        plannedExp: s.plannedExp + r.plannedExpenses, actualExp: s.actualExp + r.actualExpenses,
+        targetRev:  s.targetRev  + r.targetRevenue,  actualRev: s.actualRev  + r.actualRevenue,
+        exceeded:   s.exceeded + (r.expStatus==="exceeded"?1:0),
+        revMissed:  s.revMissed + (r.revStatus!=="ok"?1:0),
+      }), { plannedExp:0, actualExp:0, targetRev:0, actualRev:0, exceeded:0, revMissed:0 });
+
+      return { targets: results, totals };
+    }),
+
+  // سجل التنبيهات
+  getAlertHistory: protectedProcedure
+    .input(z.object({ companyId:z.number(), limit:z.number().default(50) }))
+    .query(async ({ input }) => {
+      await db.run(sql`CREATE TABLE IF NOT EXISTS budget_alert_history (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, analytic_id INTEGER, center_name TEXT, alert_type TEXT, severity TEXT, message TEXT, actual_value REAL, planned_value REAL, pct_used REAL, channel TEXT DEFAULT 'in-app', is_read INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))`).catch(()=>{});
+      const res = await db.run(sql`SELECT * FROM budget_alert_history WHERE company_id=${input.companyId} ORDER BY created_at DESC LIMIT ${input.limit}`).catch(()=>({rows:[]}));
+      return (res as any).rows||[];
+    }),
+
+  // تسجيل تنبيه
+  recordAlert: protectedProcedure
+    .input(z.object({ companyId:z.number(), analyticId:z.number().optional(), centerName:z.string(), alertType:z.string(), severity:z.string(), message:z.string(), actualValue:z.number().optional(), plannedValue:z.number().optional(), pctUsed:z.number().optional() }))
+    .mutation(async ({ input }) => {
+      await db.run(sql`CREATE TABLE IF NOT EXISTS budget_alert_history (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id INTEGER NOT NULL, analytic_id INTEGER, center_name TEXT, alert_type TEXT, severity TEXT, message TEXT, actual_value REAL, planned_value REAL, pct_used REAL, channel TEXT DEFAULT 'in-app', is_read INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))`).catch(()=>{});
+      await db.run(sql`INSERT INTO budget_alert_history (company_id, analytic_id, center_name, alert_type, severity, message, actual_value, planned_value, pct_used) VALUES (${input.companyId}, ${input.analyticId||0}, ${input.centerName}, ${input.alertType}, ${input.severity}, ${input.message}, ${input.actualValue||0}, ${input.plannedValue||0}, ${input.pctUsed||0})`);
+      return { success: true };
+    }),
+
+  // تحديد تنبيه كمقروء
+  markAlertRead: protectedProcedure
+    .input(z.object({ companyId:z.number(), alertId:z.number().optional() }))
+    .mutation(async ({ input }) => {
+      if (input.alertId) {
+        await db.run(sql`UPDATE budget_alert_history SET is_read=1 WHERE id=${input.alertId}`);
+      } else {
+        await db.run(sql`UPDATE budget_alert_history SET is_read=1 WHERE company_id=${input.companyId}`);
+      }
+      return { success: true };
+    }),
+
   // ══ تقرير المبيعات اليومية حسب مراكز التكلفة ════════════════════════════
   dailySalesReport: protectedProcedure
     .input(z.object({
