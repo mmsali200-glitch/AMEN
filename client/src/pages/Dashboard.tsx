@@ -873,7 +873,10 @@ function DiagnosticsPage({ companyId, co }:any) {
 
 function CompaniesPage({ currentUser }:any) {
   const { data:companies, refetch } = trpc.company.list.useQuery();
-  const createCo  = trpc.company.create.useMutation({ onSuccess:()=>{ refetch(); setShowForm(false); } });
+  const createCo   = trpc.company.create.useMutation({ onSuccess:()=>{ refetch(); setShowForm(false); } });
+  const cloneOdoo  = (trpc as any).journal.cloneOdooConfig.useMutation({ onSuccess:()=>{ refetch(); alert("✅ تم نسخ إعدادات Odoo!"); } });
+  const cloneData  = (trpc as any).journal.cloneJournalData.useMutation({ onSuccess:(d:any)=>{ refetch(); alert(`✅ تم نسخ ${d.entries} قيد و ${d.lines} سطر!`); } });
+  const [cloning, setCloning] = useState<number|null>(null);
   const updateCo  = trpc.company.update.useMutation({ onSuccess:()=>{ refetch(); setEditId(null); } });
   const deleteCo  = trpc.company.delete.useMutation({ onSuccess:()=>{ refetch(); setDeleteModal(null); } });
   const clearData = trpc.company.clearData.useMutation({ onSuccess:()=>{ refetch(); setDeleteModal(null); } });
@@ -982,6 +985,20 @@ function CompaniesPage({ currentUser }:any) {
                   </button>
                   <button onClick={()=>openDeleteModal(co,"company")} style={{ padding:"6px 12px", borderRadius:8, border:`1px solid #FECACA`, background:C.redLight, color:C.red, cursor:"pointer", fontSize:12, fontWeight:600 }}>
                     🗑️ حذف الشركة
+                  </button>
+                  <button onClick={()=>{
+                    const targetId = Number(prompt("أدخل رقم ID الشركة الهدف للنسخ:"));
+                    if (!targetId) return;
+                    cloneOdoo.mutate({ fromCompanyId:co.id, toCompanyId:targetId });
+                  }} style={{ padding:"6px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.primaryLight, color:C.primary, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    📋 نسخ Odoo
+                  </button>
+                  <button onClick={()=>{
+                    const targetId = Number(prompt("أدخل رقم ID الشركة الهدف للنسخ:"));
+                    if (!targetId || !confirm(`نسخ كل البيانات من ${co.name} للشركة ${targetId}؟`)) return;
+                    cloneData.mutate({ fromCompanyId:co.id, toCompanyId:targetId });
+                  }} style={{ padding:"6px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.tealLight, color:C.teal, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+                    💾 نسخ البيانات
                   </button>
                 </div>
               )}

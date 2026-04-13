@@ -996,6 +996,75 @@ const journalRouter = router({
       return { success: true };
     }),
 
+
+  // ── نسخ إعدادات Odoo من شركة لأخرى ──────────────────────────────────────
+  cloneOdooConfig: protectedProcedure
+    .input(z.object({
+      fromCompanyId: z.number(),
+      toCompanyId:   z.number(),
+      newName:       z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const src = await db.run(sql`SELECT * FROM odoo_configs WHERE company_id=${input.fromCompanyId} LIMIT 1`);
+      const row = (src as any).rows?.[0];
+      if (!row) throw new TRPCError({ code:"NOT_FOUND", message:"لا توجد إعدادات Odoo للشركة المصدر" });
+
+      await db.run(sql`INSERT OR REPLACE INTO odoo_configs
+        (company_id, url, database, username, password, is_connected, odoo_company_id, odoo_company_name, created_at)
+        VALUES (${input.toCompanyId}, ${row.url}, ${row.database}, ${row.username}, ${row.password}, 0,
+                ${row.odoo_company_id}, ${input.newName || row.odoo_company_name}, datetime('now'))`);
+
+      return { success: true };
+    }),
+
+  // ── نسخ بيانات قيود من شركة لأخرى (للاختبار) ───────────────────────────
+  cloneJournalData: protectedProcedure
+    .input(z.object({
+      fromCompanyId: z.number(),
+      toCompanyId:   z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const { fromCompanyId: from, toCompanyId: to } = input;
+
+      // حذف البيانات القديمة للشركة الهدف
+      await db.run(sql`DELETE FROM journal_entry_lines WHERE company_id=${to}`);
+      await db.run(sql`DELETE FROM journal_entries WHERE company_id=${to}`);
+      await db.run(sql`DELETE FROM analytic_lines WHERE company_id=${to}`).catch(()=>{});
+
+      // نسخ journal_entries
+      await db.run(sql`INSERT INTO journal_entries (company_id, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name, narration)
+        SELECT ${to}, odoo_move_id, name, ref, journal_name, date, state, total_debit, total_credit, partner_name, narration
+        FROM journal_entries WHERE company_id=${from}`);
+
+      // ربط IDs الجديدة
+      const oldEntries = await db.run(sql`SELECT id, odoo_move_id FROM journal_entries WHERE company_id=${from} ORDER BY id`);
+      const newEntries = await db.run(sql`SELECT id, odoo_move_id FROM journal_entries WHERE company_id=${to} ORDER BY id`);
+
+      const idMap: Record<number,number> = {};
+      const oldRows = (oldEntries as any).rows || [];
+      const newRows = (newEntries as any).rows || [];
+      oldRows.forEach((r:any, i:number) => { if(newRows[i]) idMap[Number(r.id)] = Number(newRows[i].id); });
+
+      // نسخ journal_entry_lines
+      const lines = await db.run(sql`SELECT * FROM journal_entry_lines WHERE company_id=${from} ORDER BY id`);
+      for (const l of (lines as any).rows || []) {
+        const newEntryId = idMap[Number(l.journal_entry_id)] || 0;
+        await db.run(sql`INSERT INTO journal_entry_lines
+          (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date)
+          VALUES (${newEntryId}, ${to}, ${l.account_code}, ${l.account_name}, ${l.account_type}, ${l.partner_name||""}, ${l.label||""}, ${l.debit}, ${l.credit}, ${l.date})`);
+      }
+
+      // نسخ analytic_lines إذا وجدت
+      await db.run(sql`INSERT OR IGNORE INTO analytic_lines
+        (journal_entry_id, company_id, odoo_analytic_id, analytic_name, account_code, account_name, account_type, partner_name, label, date, percentage, debit, credit, amount)
+        SELECT 0, ${to}, odoo_analytic_id, analytic_name, account_code, account_name, account_type, partner_name, label, date, percentage, debit, credit, amount
+        FROM analytic_lines WHERE company_id=${from}`).catch(()=>{});
+
+      const entryCount = (oldEntries as any).rows?.length || 0;
+      const lineCount  = (lines as any).rows?.length || 0;
+      return { success:true, entries:entryCount, lines:lineCount };
+    }),
+
   // ══ تقرير المبيعات اليومية حسب مراكز التكلفة ════════════════════════════
   dailySalesReport: protectedProcedure
     .input(z.object({

@@ -41,6 +41,20 @@ export async function seedBawaba() {
     await db.execute({ sql:`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, status, created_at) VALUES (?,?,'cfo_admin','active',datetime('now'))`, args:[uid1, companyId] }).catch(()=>{});
     console.log("✅ صلاحيات ممنوحة");
 
+
+    // ── إضافة شركة اختبار (نسخة من البوابة) ─────────────────────────────
+    // شركة الخليج للتجارة = نفس Odoo لكن كشركة اختبار
+    const khalij = await db.execute("SELECT id FROM companies WHERE id=1 LIMIT 1").catch(()=>({rows:[]}));
+    if (khalij.rows.length > 0) {
+      await db.execute({
+        sql: `INSERT OR REPLACE INTO odoo_configs (company_id, url, database, username, password, is_connected, odoo_company_id, odoo_company_name, created_at) VALUES (?,?,?,?,?,0,?,?,datetime('now'))`,
+        args: [1, "https://habbaba-giftgates.odoo.com", "habbaba-giftgates-main-10032787", "admin@admin.com", "KMM9999", 1, "Gift Gate (اختبار)"]
+      });
+      const u1b = await db.execute("SELECT id FROM users LIMIT 1").catch(()=>({rows:[{id:1}]}));
+      const uid1b = (u1b.rows[0] as any)?.id || 1;
+      await db.execute({ sql:`INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, status, created_at) VALUES (?,1,'cfo_admin','active',datetime('now'))`, args:[uid1b] }).catch(()=>{});
+      console.log("✅ شركة الخليج مهيأة للاختبار (نفس Odoo)");
+    }
   } catch(e: any) {
     console.error("seedBawaba error:", e.message);
   }
