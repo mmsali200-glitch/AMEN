@@ -49,6 +49,58 @@ if (distPath) {
   }));
 }
 
+
+// ── Background Sync — no HTTP timeout ──────────────────────────────────────
+const syncJobs: Record<string, {status:string, logs:string[], progress:number, done:boolean, error?:string}> = {};
+
+app.post("/bg-sync/start", express.json(), async (req, res) => {
+  const { companyId, odooCompanyId, dateFrom, dateTo } = req.body;
+  const jobId = `${companyId}-${Date.now()}`;
+  syncJobs[jobId] = { status:"running", logs:[], progress:0, done:false };
+
+  res.json({ jobId });  // respond immediately
+
+  // Run sync in background
+  (async () => {
+    try {
+      const { runFullSync } = await import("./sync.js");
+      await runFullSync({
+        companyId: Number(companyId),
+        odooCompanyId: Number(odooCompanyId),
+        dateFrom, dateTo,
+        onProgress: (msg: string) => {
+          syncJobs[jobId].logs.push(`[${new Date().toLocaleTimeString("ar")}] ${msg}`);
+          // Extract progress percentage
+          const pct = msg.match(/(\d+)%/);
+          if (pct) syncJobs[jobId].progress = Number(pct[1]);
+          if (syncJobs[jobId].logs.length > 200) syncJobs[jobId].logs = syncJobs[jobId].logs.slice(-100);
+          console.log("[BG-SYNC]", msg);
+        }
+      });
+      syncJobs[jobId].status = "done";
+      syncJobs[jobId].done   = true;
+      syncJobs[jobId].progress = 100;
+      syncJobs[jobId].logs.push(`[${new Date().toLocaleTimeString("ar")}] ✅ اكتملت المزامنة`);
+    } catch(e: any) {
+      syncJobs[jobId].status  = "error";
+      syncJobs[jobId].done    = true;
+      syncJobs[jobId].error   = e.message;
+      syncJobs[jobId].logs.push(`[${new Date().toLocaleTimeString("ar")}] ❌ ${e.message}`);
+      console.error("[BG-SYNC ERROR]", e.message);
+    }
+  })();
+});
+
+app.get("/bg-sync/status/:jobId", (req, res) => {
+  const job = syncJobs[req.params.jobId];
+  if (!job) { res.json({ found: false }); return; }
+  res.json({ found: true, ...job });
+});
+
+app.get("/bg-sync/list", (_req, res) => {
+  res.json(Object.entries(syncJobs).map(([id, j]) => ({ id, status:j.status, progress:j.progress, done:j.done, logs:j.logs.slice(-5) })));
+});
+
 // Run seed on startup
 seedBawaba().then(()=>console.log("Seed done")).catch(console.error);
 

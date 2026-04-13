@@ -596,40 +596,66 @@ function SyncCard({ item, dateFrom, dateTo, syncType, incOpening }:any) {
 
   const fullSyncMut = (trpc as any).odoo.fullSync.useMutation();
 
-  const doSync = () => {
+  const doSync = async () => {
     if (!item.companyId || !item.odooId) return;
     setBusy(true); setDone(false); setLog([]); setPct(0); setRes(null);
-    const steps:[number,string,string][] = [
-      [5,  "🔗 الاتصال بـ Odoo...","info"],
-      [15, "✅ تم تسجيل الدخول","success"],
-      [25, "📚 استيراد دليل الحسابات...","info"],
-      [35, "📋 استيراد الدفاتر المحاسبية...","info"],
-      [45, "👥 استيراد الشركاء (عملاء + موردون)...","info"],
-      [55, "📊 حساب الأرصدة الافتتاحية...","info"],
-      [68, "📥 استيراد القيود المحاسبية...","info"],
-      [82, "⚙️ معالجة وتصنيف السطور...","info"],
-      [92, "💾 حفظ كل البيانات...","info"],
-    ];
-    let si=0;
-    const iv=setInterval(()=>{ if(si<steps.length){ const[p,m,t]=steps[si]; setPct(p); add(m,t); si++; } },1000);
+    add("🔗 بدء المزامنة في الخلفية...");
 
-    fullSyncMut.mutate({
-      companyId: item.companyId,
-      odooCompanyId: item.odooId,
-      dateFrom, dateTo,
-      models: ["coa","journals","partners","currencies","entries"]
-    },{
-      onSuccess:(d:any)=>{
-        clearInterval(iv); setPct(100);
-        add(`✅ دليل الحسابات: ${d.coa||0} حساب`,"success");
-        add(`✅ الدفاتر: ${d.journals||0} دفتر`,"success");
-        add(`✅ الشركاء: ${d.partners||0} شريك`,"success");
-        add(`✅ القيود: ${d.entries||0} قيد`,"success");
-        add(`✅ الرصيد الافتتاحي: ${d.openingLines||0} سطر`,"success");
-        setRes(d); setDone(true); setBusy(false); refetch();
-      },
-      onError:(e:any)=>{ clearInterval(iv); add(`❌ ${e.message}`,"error"); setBusy(false); setPct(0); }
-    });
+    try {
+      // Start background job
+      const startRes = await fetch("/bg-sync/start", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          companyId:   item.companyId,
+          odooCompanyId: item.odooId,
+          dateFrom:    item.dateFrom || "2020-01-01",
+          dateTo:      item.dateTo   || new Date().toISOString().split("T")[0],
+        })
+      });
+      const { jobId } = await startRes.json();
+      add(`✅ بدأت المزامنة (job: ${jobId})`);
+      add("⏳ جاري معالجة البيانات — قد تستغرق 15-30 دقيقة للقيود الكثيرة...");
+
+      // Poll every 3 seconds
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/bg-sync/status/${jobId}`);
+          const status = await statusRes.json();
+          if (!status.found) { clearInterval(poll); return; }
+
+          // Update logs with new messages
+          if (status.logs?.length > 0) {
+            const lastMsg = status.logs[status.logs.length - 1];
+            setLog(prev => {
+              if (prev.length > 0 && prev[prev.length-1].msg === lastMsg) return prev;
+              return [...prev.slice(-50), {msg:lastMsg, type:"info"}];
+            });
+          }
+
+          if (status.progress > 0) setPct(status.progress);
+
+          if (status.done) {
+            clearInterval(poll);
+            setBusy(false);
+            setDone(true);
+            if (status.error) {
+              add("❌ " + status.error, "error");
+            } else {
+              add("✅ اكتملت المزامنة بنجاح!", "success");
+              setPct(100);
+            }
+          }
+        } catch(e) { console.error("poll error", e); }
+      }, 3000);
+
+      // Stop polling after 2 hours max
+      setTimeout(() => clearInterval(poll), 2 * 60 * 60 * 1000);
+
+    } catch(e:any) {
+      add("❌ " + e.message, "error");
+      setBusy(false);
+    }
   };
 
   return (
