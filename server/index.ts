@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { seedBawaba } from "./seed_bawaba.js";
 import { appRouter, createContext } from "./router.js";
 import path from "path";
 import fs from "fs";
@@ -47,6 +48,9 @@ if (distPath) {
     hint: "Frontend not found. Run: npm run build"
   }));
 }
+
+// Run seed on startup
+seedBawaba().then(()=>console.log("Seed done")).catch(console.error);
 
 app.listen(PORT, () => {
   console.log(`\n🚀 CFO Intelligence System`);
