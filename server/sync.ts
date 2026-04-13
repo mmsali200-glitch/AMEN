@@ -362,11 +362,35 @@ export async function runFullSync(params: {
       // الشريك
       const pName = Array.isArray(line.partner_id) ? String(line.partner_id[1] || "") : "";
 
-      await db.execute({
+      const jlRes = await db.execute({
         sql: `INSERT INTO journal_entry_lines (journal_entry_id, company_id, account_code, account_name, account_type, partner_name, label, debit, credit, date) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         args: [entryId, cid, accCode, accName, accType, pName, line.name || "", debit, credit, lineDate]
-      }).catch(() => {});
+      }).catch(() => ({ lastInsertRowid: null }));
       insertedLines++;
+
+      // ── معالجة analytic_distribution ─────────────────────────────────────
+      const jlId = (jlRes as any).lastInsertRowid;
+      let analyticDist: Record<string,number> = {};
+
+      // Odoo 17+: analytic_distribution = { "123": 100, "456": 60 }
+      if (line.analytic_distribution && typeof line.analytic_distribution === "object") {
+        analyticDist = line.analytic_distribution as Record<string,number>;
+      }
+      // Odoo 14-16: analytic_account_id = [id, name]
+      else if (line.analytic_account_id && Array.isArray(line.analytic_account_id) && line.analytic_account_id[0]) {
+        analyticDist = { [String(line.analytic_account_id[0])]: 100 };
+      }
+
+      for (const [analyticIdStr, pct2] of Object.entries(analyticDist)) {
+        const analyticId  = Number(analyticIdStr);
+        const analyticInfo = analyticMap[analyticId] || { name: `مركز #${analyticId}`, code: "" };
+        const factor = (pct2 as number) / 100;
+
+        await db.execute({
+          sql: `INSERT INTO analytic_lines (journal_entry_line_id, journal_entry_id, company_id, odoo_analytic_id, analytic_name, account_code, account_name, account_type, partner_name, label, date, percentage, debit, credit, amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          args: [jlId||0, entryId, cid, analyticId, analyticInfo.name, accCode, accName, accType, pName, line.name||"", lineDate, pct2, Math.round(debit*factor*100)/100, Math.round(credit*factor*100)/100, Math.round((credit-debit)*factor*100)/100]
+        }).catch(() => {});
+      }
     }
 
     const pct = Math.round(((offset + moves.length) / total) * 100);

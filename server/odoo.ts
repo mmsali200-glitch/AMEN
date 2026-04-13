@@ -289,7 +289,7 @@ export class OdooConnector {
   // ── سطور القيود ───────────────────────────────────────────────────────────
   async getJournalLines(moveIds: number[]): Promise<any[]> {
     if (!moveIds.length) return [];
-    const fields = ["id","move_id","account_id","name","debit","credit","date","partner_id"];
+    const fields = ["id","move_id","account_id","name","debit","credit","date","partner_id","analytic_distribution","analytic_account_id"];
 
     // محاولة 1: بدون فلتر display_type (يعمل مع كل الإصدارات)
     try {
