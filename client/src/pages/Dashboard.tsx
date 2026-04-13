@@ -1718,8 +1718,12 @@ function DailySalesPage({ companyId, co }:any) {
           <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>📊 تقرير المبيعات اليومية حسب مراكز التكلفة</h2>
           <div style={{ display:"flex", gap:8, marginTop:5, flexWrap:"wrap" }}>
             <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
-            <Badge label={isReal?"✅ من analytic_distribution Odoo":"⚠️ من كود الحساب (أعد المزامنة)"}
-              bg={isReal?C.greenLight:C.amberLight} color={isReal?C.green:C.amber}/>
+            {isReal
+              ? <Badge label="✅ مراكز تحليلية من Odoo" bg={C.greenLight} color={C.green}/>
+              : data?.source==="journal_entry_lines"
+                ? <Badge label="⚠️ تقريبي — أعد المزامنة لمراكز دقيقة" bg={C.amberLight} color={C.amber}/>
+                : <Badge label="⚠️ لا توجد بيانات — تحقق من المزامنة" bg={C.redLight} color={C.red}/>
+            }
             {totalCenters > 0 && <Badge label={`${totalCenters} مركز تكلفة`} bg={C.primaryLight} color={C.primary}/>}
           </div>
         </div>

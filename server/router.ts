@@ -1040,17 +1040,17 @@ const journalRouter = router({
         GROUP BY al.date, al.odoo_analytic_id
         ORDER BY al.date, al.odoo_analytic_id`).catch(()=>({rows:[]}));
 
-      // إذا لا توجد analytic_lines، جرّب من journal_entry_lines مباشرة
+      // إذا لا توجد analytic_lines، جرّب من journal_entry_lines بطريقتين
       const mainRows = (rows as any).rows || [];
       let finalRows = mainRows;
 
       if (mainRows.length === 0) {
-        // fallback: group by account_code (كود الحساب = مركز تكلفة تقريبي)
-        const fbRows = await db.run(sql`
+        // محاولة 1: group by partner_name (الشريك = العميل / المشروع)
+        const fbRows1 = await db.run(sql`
           SELECT
             jl.date,
-            jl.account_code as odoo_analytic_id,
-            jl.account_name as analytic_name,
+            COALESCE(NULLIF(jl.partner_name,''), jl.account_code) as odoo_analytic_id,
+            COALESCE(NULLIF(jl.partner_name,''), jl.account_name) as analytic_name,
             SUM(jl.credit - jl.debit) as amount,
             COUNT(*) as txn_count
           FROM journal_entry_lines jl
@@ -1060,9 +1060,31 @@ const journalRouter = router({
             AND jl.date <= ${dT}
             AND jl.account_type IN (${inTypes})
             AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
-          GROUP BY jl.date, jl.account_code
-          ORDER BY jl.date, jl.account_code`).catch(()=>({rows:[]}));
-        finalRows = (fbRows as any).rows || [];
+          GROUP BY jl.date, COALESCE(NULLIF(jl.partner_name,''), jl.account_code)
+          ORDER BY jl.date, amount DESC`).catch(()=>({rows:[]}));
+
+        if ((fbRows1 as any).rows?.length > 0) {
+          finalRows = (fbRows1 as any).rows;
+        } else {
+          // محاولة 2: group by journal_name (نوع الدفتر)
+          const fbRows2 = await db.run(sql`
+            SELECT
+              jl.date,
+              je.journal_name as odoo_analytic_id,
+              je.journal_name as analytic_name,
+              SUM(jl.credit - jl.debit) as amount,
+              COUNT(*) as txn_count
+            FROM journal_entry_lines jl
+            LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
+            WHERE jl.company_id = ${cid}
+              AND jl.date >= ${dF}
+              AND jl.date <= ${dT}
+              AND jl.account_type IN (${inTypes})
+              AND (je.name IS NULL OR je.name != 'رصيد افتتاحي')
+            GROUP BY jl.date, je.journal_name
+            ORDER BY jl.date, amount DESC`).catch(()=>({rows:[]}));
+          finalRows = (fbRows2 as any).rows || [];
+        }
       }
 
       // بناء المصفوفة: { date -> { centerId -> amount } }

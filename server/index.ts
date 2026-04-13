@@ -198,3 +198,35 @@ app.post("/sync/:companyId/:odooCompanyId", async (req, res) => {
     res.json({ success:true, ...result, logs });
   } catch(e:any) { res.json({ error: e.message }); }
 });
+
+// ── Daily Sales Diagnostic ───────────────────────────────────────────────────
+app.get("/diag-sales/:companyId", async (req, res) => {
+  try {
+    const { createClient } = await import("@libsql/client");
+    const path2 = await import("path");
+    const { fileURLToPath: ftu } = await import("url");
+    const __d = path2.dirname(ftu(import.meta.url));
+    const client = createClient({ url: `file:${path2.join(__d, "..", "data", "cfo.db")}` });
+    const cid = parseInt(req.params.companyId)||0;
+
+    const al    = await client.execute(`SELECT count(*) n FROM analytic_lines WHERE company_id=${cid}`).catch(()=>({rows:[{n:0}]}));
+    const jl    = await client.execute(`SELECT count(*) n FROM journal_entry_lines WHERE company_id=${cid}`).catch(()=>({rows:[{n:0}]}));
+    const rev   = await client.execute(`SELECT count(*) n, min(date) mn, max(date) mx FROM journal_entry_lines WHERE company_id=${cid} AND account_type IN ('revenue','other_income')`).catch(()=>({rows:[{}]}));
+    const byPtn = await client.execute(`SELECT partner_name, count(*) n, round(sum(credit-debit),0) amt FROM journal_entry_lines WHERE company_id=${cid} AND account_type='revenue' AND partner_name!='' GROUP BY partner_name ORDER BY amt DESC LIMIT 10`).catch(()=>({rows:[]}));
+    const byJrn = await client.execute(`SELECT je.journal_name, count(*) n, round(sum(jl.credit-jl.debit),0) amt FROM journal_entry_lines jl JOIN journal_entries je ON je.id=jl.journal_entry_id WHERE jl.company_id=${cid} AND jl.account_type='revenue' GROUP BY je.journal_name ORDER BY amt DESC LIMIT 10`).catch(()=>({rows:[]}));
+
+    res.json({
+      analytic_lines:    al.rows[0]?.n || 0,
+      journal_lines:     jl.rows[0]?.n || 0,
+      revenue_lines:     rev.rows[0]?.n || 0,
+      revenue_dates:     { from: rev.rows[0]?.mn, to: rev.rows[0]?.mx },
+      by_partner:        byPtn.rows,
+      by_journal:        byJrn.rows,
+      recommendation: Number(al.rows[0]?.n||0) > 0
+        ? "✅ analytic_lines موجودة — الصفحة يجب أن تعمل"
+        : Number(byPtn.rows.length) > 0
+        ? "⚠️ استخدام partner_name كمراكز — الصفحة ستعمل بشكل تقريبي"
+        : "❌ لا توجد بيانات إيرادات — أعد المزامنة من Odoo"
+    });
+  } catch(e:any) { res.json({ error: e.message }); }
+});
