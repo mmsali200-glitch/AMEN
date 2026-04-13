@@ -1640,6 +1640,38 @@ function GroupCard({ group, onExpand, expanded, onDelete, onSync, currentUser }:
 // ══════════════════════════════════════════════════════════════════════════════
 // 📊 تقرير المبيعات اليومية حسب مراكز التكلفة
 // ══════════════════════════════════════════════════════════════════════════════
+function KPICard({ label, value, sub, icon, color, bg, trend, trendVal }:any) {
+  return (
+    <Card style={{ padding:"18px 20px", background:bg||C.surface }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+        <div style={{ flex:1 }}>
+          <p style={{ fontSize:11, color:C.muted, margin:"0 0 6px", fontWeight:600 }}>{label}</p>
+          <p style={{ fontSize:24, fontWeight:900, color:color||C.text, margin:"0 0 4px" }}>{value}</p>
+          {sub && <p style={{ fontSize:11, color:C.textSec, margin:0 }}>{sub}</p>}
+          {trendVal !== undefined && (
+            <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:6 }}>
+              <span style={{ fontSize:12, color:trendVal>=0?C.green:C.red, fontWeight:700 }}>
+                {trendVal>=0?"▲":"▼"} {Math.abs(trendVal).toFixed(1)}%
+              </span>
+              <span style={{ fontSize:10, color:C.muted }}>مقارنة بالفترة السابقة</span>
+            </div>
+          )}
+        </div>
+        <div style={{ width:46, height:46, borderRadius:12, background:`${color||C.primary}20`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
+          {icon}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ── Mini Sparkline ────────────────────────────────────────────────────────────
+function AdvisorPage({ companyId, co }:any) { return <div style={{padding:24}}><p>صفحة المستشار AI</p></div>; }
+
+function ChatbotPage({ companyId, co }:any) { return <div style={{padding:24}}><p>شات بوت مالي</p></div>; }
+
+function UsersPage({ currentUser }:any) { return <div style={{padding:24}}><p>إدارة المستخدمين</p></div>; }
+
 function DailySalesPage({ companyId, co }:any) {
   const yr  = new Date().getFullYear();
   const [dF, setDF]         = useState(`${yr}-01-01`);
@@ -2997,32 +3029,6 @@ function PartnerStatementPage({ companyId }:any) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── KPI Cards Component ───────────────────────────────────────────────────────
-function KPICard({ label, value, sub, icon, color, bg, trend, trendVal }:any) {
-  return (
-    <Card style={{ padding:"18px 20px", background:bg||C.surface }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-        <div style={{ flex:1 }}>
-          <p style={{ fontSize:11, color:C.muted, margin:"0 0 6px", fontWeight:600 }}>{label}</p>
-          <p style={{ fontSize:24, fontWeight:900, color:color||C.text, margin:"0 0 4px" }}>{value}</p>
-          {sub && <p style={{ fontSize:11, color:C.textSec, margin:0 }}>{sub}</p>}
-          {trendVal !== undefined && (
-            <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:6 }}>
-              <span style={{ fontSize:12, color:trendVal>=0?C.green:C.red, fontWeight:700 }}>
-                {trendVal>=0?"▲":"▼"} {Math.abs(trendVal).toFixed(1)}%
-              </span>
-              <span style={{ fontSize:10, color:C.muted }}>مقارنة بالفترة السابقة</span>
-            </div>
-          )}
-        </div>
-        <div style={{ width:46, height:46, borderRadius:12, background:`${color||C.primary}20`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
-          {icon}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ── Mini Sparkline ────────────────────────────────────────────────────────────
 function Sparkline({ data, color, height=40 }:any) {
   if (!data?.length) return null;
   const max = Math.max(...data, 1);
