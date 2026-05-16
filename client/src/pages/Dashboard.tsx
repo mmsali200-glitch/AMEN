@@ -2613,289 +2613,13 @@ function BudgetMonitorPage({ companyId, co }:any) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ── HelpdeskPortalWrapper — يجلب الشركة أولاً ──────────────────────────────
 // ── HelpdeskOdooSettings — إعدادات اتصال Odoo داخل Helpdesk ────────────────
-function HelpdeskOdooSettings({ companyId, co, OC }:any) {
-  const [form, setForm] = useState({
-    url:"", database:"", username:"", password:""
-  });
-  const [step, setStep]     = useState<"form"|"discover"|"syncing"|"done">("form");
-  const [discovered, setDisc] = useState<any[]>([]);
-  const [selOdooId, setSelId] = useState<number|null>(null);
-  const [logs, setLogs]     = useState<string[]>([]);
-  const [jobId, setJobId]   = useState<string|null>(null);
-  const [pct, setPct]       = useState(0);
-  const [error, setError]   = useState("");
-  const [saved, setSaved]   = useState(false);
-  const logsRef = useRef<HTMLDivElement>(null);
-
-  // Load existing config
-  const { data:cfg } = (trpc as any).odoo.getConfig.useQuery({ companyId }, { enabled:!!companyId });
-  useEffect(()=>{
-    if (cfg) setForm({ url:cfg.url||"", database:cfg.database||"", username:cfg.username||"", password:cfg.password||"" });
-  }, [cfg]);
-
-  useEffect(()=>{ logsRef.current?.scrollTo(0,logsRef.current.scrollHeight); }, [logs]);
-
-  const addLog = (msg:string) => setLogs(l=>[...l, `[${new Date().toLocaleTimeString("ar")}] ${msg}`]);
-
-  // Save + Discover
-  const saveAndDiscover = async () => {
-    if (!form.url||!form.database||!form.username||!form.password) { setError("جميع الحقول مطلوبة"); return; }
-    setError(""); setSaved(false);
-    try {
-      // Save config
-      await fetch("/trpc/odoo.saveConfig", {
-        method:"POST", headers:{"Content-Type":"application/json", Authorization:`Bearer ${localStorage.getItem("cfo_token")||""}`},
-        body: JSON.stringify({ json:{ companyId, ...form } })
-      });
-      setSaved(true);
-
-      // Discover companies
-      addLog("🔗 الاتصال بـ Odoo...");
-      const res = await fetch(`/trpc/odoo.testAndDiscover?input=${encodeURIComponent(JSON.stringify({json:{companyId}}))}`, {
-        headers:{ Authorization:`Bearer ${localStorage.getItem("cfo_token")||""}` }
-      });
-      const data = await res.json();
-      const companies = data?.result?.data?.companies || data?.result?.companies || [];
-      if (companies.length === 0) { setError("لم يتم اكتشاف شركات — تحقق من البيانات"); return; }
-      setDisc(companies);
-      if (companies.length === 1) setSelId(companies[0].id);
-      setStep("discover");
-      addLog(`✅ تم الاتصال — وُجد ${companies.length} شركة`);
-    } catch(e:any) { setError(e.message||"فشل الاتصال"); }
-  };
-
-  // Start background sync
-  const startSync = async () => {
-    if (!selOdooId) { setError("اختر شركة أولاً"); return; }
-    setStep("syncing"); setLogs([]); setPct(0);
-    addLog("🚀 بدء المزامنة في الخلفية...");
-
-    try {
-      const res = await fetch("/bg-sync/start", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ companyId, odooCompanyId:selOdooId, dateFrom:`${new Date().getFullYear()-1}-01-01`, dateTo:new Date().toISOString().split("T")[0] })
-      });
-      const { jobId:jid } = await res.json();
-      setJobId(jid);
-      addLog(`✅ تم تسجيل المزامنة (${jid})`);
-      addLog("⏳ جاري معالجة القيود المحاسبية — انتظر...");
-
-      const poll = setInterval(async()=>{
-        try {
-          const sr = await fetch(`/bg-sync/status/${jid}`);
-          const st = await sr.json();
-          if (st.logs?.length) {
-            const last = st.logs[st.logs.length-1];
-            setLogs(prev => prev[prev.length-1]===last?prev:[...prev.slice(-30),last]);
-          }
-          if (st.progress>0) setPct(st.progress);
-          if (st.done) {
-            clearInterval(poll);
-            if (st.error) addLog("❌ "+st.error);
-            else { addLog("✅ اكتملت المزامنة بنجاح!"); setPct(100); setStep("done"); }
-          }
-        } catch {}
-      }, 3000);
-      setTimeout(()=>clearInterval(poll), 2*60*60*1000);
-    } catch(e:any) { setError(e.message); setStep("discover"); }
-  };
-
-  const BG = OC || { primary:"#714B67", primarySoft:"#f5eef3", accent:"#00A09D", border:"#E6E6E6", bg:"#F8F8F8", surface:"#fff", text:"#2c2c2c", textSoft:"#5b5b5b", textMuted:"#8c8c8c", done:"#28a745", doneBg:"#e3f6e6", urgent:"#D14545", urgentBg:"#fce8e8" };
-
-  return (
-    <div style={{ direction:"rtl" }}>
-      {error && <div style={{ padding:"10px 14px",borderRadius:8,background:BG.urgentBg,border:`1px solid ${BG.urgent}30`,color:BG.urgent,fontSize:12,marginBottom:14 }}>⚠️ {error}</div>}
-      {saved && step==="form" && <div style={{ padding:"10px 14px",borderRadius:8,background:BG.doneBg,color:BG.done,fontSize:12,marginBottom:14 }}>✅ تم حفظ الإعدادات</div>}
-
-      {/* STEP: Form */}
-      {(step==="form"||step==="discover") && (
-        <>
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16 }}>
-            {[
-              {l:"رابط الخادم (URL)",   k:"url",      t:"text",     ph:"https://yourcompany.odoo.com"},
-              {l:"قاعدة البيانات",      k:"database",  t:"text",     ph:"your-database-name"},
-              {l:"اسم المستخدم",        k:"username",  t:"email",    ph:"admin@company.com"},
-              {l:"كلمة المرور / API Key",k:"password", t:"password", ph:"••••••••"},
-            ].map(f=>(
-              <div key={f.k}>
-                <label style={{ display:"block",fontSize:11,fontWeight:700,color:BG.textSoft,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>{f.l}</label>
-                <input type={f.t} value={(form as any)[f.k]} placeholder={f.ph}
-                  onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))}
-                  style={{ width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${BG.border}`,background:BG.bg,fontSize:13,fontFamily:"Cairo,sans-serif",outline:"none" }}
-                  onFocus={e=>(e.target as any).style.borderColor=BG.primary}
-                  onBlur={e=>(e.target as any).style.borderColor=BG.border}/>
-              </div>
-            ))}
-          </div>
-
-          {/* Pre-filled hint for البوابة */}
-          {(!form.url) && (
-            <div style={{ marginBottom:14,padding:"10px 14px",borderRadius:8,background:BG.primarySoft,border:`1px solid ${BG.primary}20` }}>
-              <p style={{ fontSize:11,color:BG.primary,fontWeight:700,margin:"0 0 6px" }}>💡 بيانات Odoo الخاصة بك</p>
-              <button onClick={()=>setForm({url:"https://habbaba-giftgates.odoo.com",database:"habbaba-giftgates-main-10032787",username:"admin@admin.com",password:"KMM9999"})}
-                style={{ padding:"5px 12px",borderRadius:6,border:`1px solid ${BG.primary}`,background:BG.primary,color:"#fff",cursor:"pointer",fontSize:11,fontFamily:"Cairo,sans-serif",fontWeight:600 }}>
-                ← تعبئة بيانات البوابة تلقائياً
-              </button>
-            </div>
-          )}
-
-          <div style={{ display:"flex",gap:10 }}>
-            <button onClick={saveAndDiscover}
-              style={{ flex:1,padding:"11px",borderRadius:9,border:"none",background:`linear-gradient(135deg,${BG.primary},#875A7B)`,color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,fontFamily:"Cairo,sans-serif",boxShadow:`0 2px 8px ${BG.primary}30` }}>
-              🔍 حفظ واكتشاف الشركات
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* STEP: Discover */}
-      {step==="discover" && discovered.length > 0 && (
-        <div style={{ marginTop:16 }}>
-          <p style={{ fontSize:13,fontWeight:700,color:BG.textSoft,marginBottom:10 }}>اختر الشركة للمزامنة:</p>
-          <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:14 }}>
-            {discovered.map((c:any)=>(
-              <div key={c.id} onClick={()=>setSelId(c.id)}
-                style={{ padding:"12px 16px",borderRadius:9,border:`2px solid ${selOdooId===c.id?BG.primary:BG.border}`,background:selOdooId===c.id?BG.primarySoft:BG.surface,cursor:"pointer",display:"flex",alignItems:"center",gap:12,transition:"all 0.15s" }}>
-                <div style={{ width:20,height:20,borderRadius:"50%",border:`2px solid ${selOdooId===c.id?BG.primary:"#ccc"}`,background:selOdooId===c.id?BG.primary:"transparent",display:"flex",alignItems:"center",justifyContent:"center" }}>
-                  {selOdooId===c.id && <div style={{ width:8,height:8,borderRadius:"50%",background:"#fff" }}/>}
-                </div>
-                <div>
-                  <p style={{ fontSize:13,fontWeight:700,color:BG.text,margin:"0 0 2px" }}>{c.name}</p>
-                  <p style={{ fontSize:11,color:BG.textMuted,margin:0 }}>ID: {c.id} {c.currency&&`| ${c.currency}`}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button onClick={startSync} disabled={!selOdooId}
-            style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:selOdooId?`linear-gradient(135deg,${BG.accent},#047d7a)`:"#ccc",color:"#fff",cursor:selOdooId?"pointer":"default",fontSize:14,fontWeight:700,fontFamily:"Cairo,sans-serif" }}>
-            🔄 بدء المزامنة
-          </button>
-        </div>
-      )}
-
-      {/* STEP: Syncing */}
-      {step==="syncing" && (
-        <div style={{ marginTop:16 }}>
-          {/* Progress bar */}
-          <div style={{ marginBottom:14 }}>
-            <div style={{ display:"flex",justifyContent:"space-between",marginBottom:6 }}>
-              <span style={{ fontSize:12,color:BG.textSoft,fontWeight:600 }}>المزامنة جارية...</span>
-              <span style={{ fontSize:13,fontWeight:700,color:BG.primary }}>{pct}%</span>
-            </div>
-            <div style={{ background:"#E2E8F0",borderRadius:6,height:10,overflow:"hidden" }}>
-              <div style={{ width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${BG.primary},${BG.accent})`,borderRadius:6,transition:"width 0.4s" }}/>
-            </div>
-            <p style={{ fontSize:11,color:BG.textMuted,margin:"6px 0 0",textAlign:"center" }}>
-              ⏳ قد تستغرق من 20-40 دقيقة للقيود الكثيرة — التطبيق يعمل في الخلفية
-            </p>
-          </div>
-          {/* Logs */}
-          <div ref={logsRef} style={{ background:"#1E1E2E",borderRadius:9,padding:"12px 14px",height:160,overflowY:"auto",fontFamily:"monospace",fontSize:11 }}>
-            {logs.map((l,i)=>(
-              <div key={i} style={{ color:l.includes("✅")?"#34D399":l.includes("❌")?"#F87171":l.includes("⏳")||l.includes("🔗")?"#60A5FA":"#94A3B8",lineHeight:1.7 }}>{l}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* STEP: Done */}
-      {step==="done" && (
-        <div style={{ textAlign:"center",padding:"28px" }}>
-          <div style={{ fontSize:48,marginBottom:12 }}>✅</div>
-          <p style={{ fontSize:18,fontWeight:700,color:BG.done,marginBottom:6 }}>اكتملت المزامنة!</p>
-          <p style={{ fontSize:13,color:BG.textMuted,marginBottom:20 }}>البيانات محدّثة — انتقل للوحة المراقبة لرؤية التذاكر</p>
-          <button onClick={()=>setStep("form")}
-            style={{ padding:"9px 20px",borderRadius:8,border:`1px solid ${BG.primary}`,background:BG.primarySoft,color:BG.primary,cursor:"pointer",fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:600 }}>
-            تعديل الإعدادات
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-function HelpdeskPortalWrapper({ user, onSwitch }:any) {
-  const { data:companies } = trpc.company.list.useQuery();
-  const [companyId, setCompanyId] = useState(0);
-  if (!companyId && companies?.length) setCompanyId(companies[0].id);
-  const co = companies?.find((c:any)=>c.id===companyId);
-
-  return (
-    <div>
-      {/* Company selector for helpdesk */}
-      {companies && companies.length > 1 && (
-        <div style={{ position:"fixed", top:56, left:0, right:0, zIndex:200, background:"#714B67", padding:"8px 20px", display:"flex", gap:8, alignItems:"center", direction:"rtl", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
-          <span style={{ fontSize:12, color:"rgba(255,255,255,0.8)" }}>الشركة:</span>
-          {companies.map((c:any)=>(
-            <button key={c.id} onClick={()=>setCompanyId(c.id)}
-              style={{ padding:"4px 12px", borderRadius:6, border:"none", background:companyId===c.id?"rgba(255,255,255,0.25)":"transparent", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:companyId===c.id?700:400, fontFamily:"Cairo,sans-serif" }}>
-              {c.name}
-            </button>
-          ))}
-        </div>
-      )}
-      <div style={{ marginTop: companies && companies.length > 1 ? 36 : 0 }}>
-        <HelpdeskPortal companyId={companyId} co={co} user={user} onSwitch={onSwitch}/>
-      </div>
-    </div>
-  );
-}
-
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 📱 شاشة اختيار اللوحة — تصميم موبايل بسيط
-// ══════════════════════════════════════════════════════════════════════════════
-function PortalLanding({ user, onChoose }:{ user:any; onChoose:(mode:string)=>void }) {
-  const portals = [
-    { id:"admin",    icon:"📊", title:"لوحة المالية",    desc:"التقارير والقوائم المالية",   color:"#2563EB", bg:"#EFF6FF" },
-    { id:"helpdesk", icon:"🎫", title:"الدعم الفني",     desc:"التذاكر والعملاء والـ SLA",    color:"#714B67", bg:"#F5EEF3" },
-    { id:"executive",icon:"🎯", title:"لوحة تنفيذية",   desc:"ملخص سريع للأداء",            color:"#059669", bg:"#ECFDF5" },
-  ];
-  return (
-    <div style={{ minHeight:"100vh", background:"#F8F9FA", fontFamily:"Cairo,system-ui,sans-serif", direction:"rtl", display:"flex", flexDirection:"column" }}>
-      {/* Header */}
-      <div style={{ background:"#2563EB", padding:"20px 20px 32px", color:"#fff" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
-          <div style={{ width:36, height:36, borderRadius:10, background:"rgba(255,255,255,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:900, fontSize:14 }}>CF</div>
-          <span style={{ fontWeight:700, fontSize:17 }}>CFO Intelligence</span>
-        </div>
-        <p style={{ fontSize:22, fontWeight:800, margin:"0 0 4px" }}>مرحباً 👋</p>
-        <p style={{ fontSize:14, opacity:0.85, margin:0 }}>{user?.name||"المستخدم"} — اختر الواجهة</p>
-      </div>
-
-      {/* Cards */}
-      <div style={{ padding:"20px 16px", display:"flex", flexDirection:"column", gap:12, marginTop:-16 }}>
-        {portals.map(p=>(
-          <button key={p.id} onClick={()=>onChoose(p.id)}
-            style={{ background:"#fff", border:`1px solid #E2E8F0`, borderRadius:16, padding:"18px 20px", display:"flex", alignItems:"center", gap:16, cursor:"pointer", textAlign:"right", width:"100%", boxShadow:"0 2px 8px rgba(0,0,0,0.06)", fontFamily:"Cairo,sans-serif" }}>
-            <div style={{ width:54, height:54, borderRadius:14, background:p.bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, flexShrink:0 }}>{p.icon}</div>
-            <div style={{ flex:1 }}>
-              <p style={{ fontSize:16, fontWeight:800, color:"#1E293B", margin:"0 0 3px" }}>{p.title}</p>
-              <p style={{ fontSize:13, color:"#64748B", margin:0 }}>{p.desc}</p>
-            </div>
-            <span style={{ color:"#CBD5E1", fontSize:20 }}>‹</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 📱 بوابة Helpdesk — تصميم موبايل بسيط
-// ══════════════════════════════════════════════════════════════════════════════
-export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
-  // ── ALL HOOKS MUST BE AT TOP — React Rules of Hooks ────────────────────
-  const [portalMode, setPortalMode] = useState<string|null>(null);
-  const [page, setPage]       = useState("dashboard");
-  const [open, setOpen]       = useState(true);
+export default function Dashboard({ user, onLogout, initialMode, onSwitchMode }:{ user:any; onLogout:()=>void; initialMode?:string; onSwitchMode?:()=>void }) {
+  const [page, setPage]         = useState("dashboard");
+  const [open, setOpen]         = useState(true);
   const [showSearch, setShowSearch] = useState(false);
-  const [isDark, setDark]     = useState(()=>localStorage.getItem("cfo_theme")==="dark");
-  const [exp, setExp]         = useState<Record<string,boolean>>(()=>Object.fromEntries(NAV.map(s=>[s.s,true])));
+  const [isDark, setDark]       = useState(()=>localStorage.getItem("cfo_theme")==="dark");
+  const [exp, setExp]           = useState<Record<string,boolean>>(()=>Object.fromEntries(NAV.map(s=>[s.s,true])));
 
-  // Apply theme
   if (isDark) C = THEMES.dark; else C = THEMES.light;
 
   const { data:companies }   = trpc.company.list.useQuery();
@@ -2904,7 +2628,6 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const co    = companies?.find((c:any)=>c.id===companyId);
   const label = NAV.flatMap(s=>s.items).find(i=>i.id===page)?.label;
 
-  // Budget alerts
   const checkAlerts = (trpc as any).journal.checkAndFireAlerts.useMutation();
   const { data:dailySummary } = (trpc as any).journal.dailySummary.useQuery(
     { companyId, year:new Date().getFullYear() },
@@ -2913,7 +2636,6 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
   const unreadAlerts   = dailySummary?.unreadAlerts   || 0;
   const emergencyCount = dailySummary?.emergencyCount || 0;
 
-  // Keyboard shortcuts
   useEffect(()=>{
     const h = (e:KeyboardEvent) => {
       if ((e.ctrlKey||e.metaKey)&&e.key==="k") { e.preventDefault(); setShowSearch(true); }
@@ -2924,21 +2646,12 @@ export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>vo
     return ()=>window.removeEventListener("keydown", h);
   }, []);
 
-  // Auto-check alerts
   useEffect(()=>{
     if (!companyId) return;
-    const runCheck = () => checkAlerts.mutate({ companyId, year:new Date().getFullYear() });
-    const timer = setInterval(runCheck, 10*60*1000);
+    const timer = setInterval(()=>checkAlerts.mutate({ companyId, year:new Date().getFullYear() }), 10*60*1000);
     return ()=>clearInterval(timer);
   }, [companyId]);
 
-  // ── PORTAL MODE ROUTING (after all hooks) ──────────────────────────────
-  if (portalMode === null) {
-    return <PortalLanding user={user} onChoose={(mode)=>setPortalMode(mode)} />;
-  }
-  if (portalMode === "helpdesk") {
-    return <HelpdeskPortalWrapper user={user} onSwitch={()=>setPortalMode(null)} />;
-  }
 
   const renderPage = () => {
     switch(page) {
