@@ -2607,700 +2607,720 @@ function BudgetMonitorPage({ companyId, co }:any) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 🎫 لوحة تحليلات الدعم الفني — Helpdesk Analytics Dashboard
 // ══════════════════════════════════════════════════════════════════════════════
-function HelpdeskPage({ companyId, co }:any) {
-  const yr = new Date().getFullYear();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🚀 شاشة اختيار اللوحة عند الدخول
+// ══════════════════════════════════════════════════════════════════════════════
+// ── HelpdeskPortalWrapper — يجلب الشركة أولاً ──────────────────────────────
+function HelpdeskPortalWrapper({ user, onSwitch }:any) {
+  const { data:companies } = trpc.company.list.useQuery();
+  const [companyId, setCompanyId] = useState(0);
+  if (!companyId && companies?.length) setCompanyId(companies[0].id);
+  const co = companies?.find((c:any)=>c.id===companyId);
+
+  return (
+    <div>
+      {/* Company selector for helpdesk */}
+      {companies && companies.length > 1 && (
+        <div style={{ position:"fixed", top:56, left:0, right:0, zIndex:200, background:"#714B67", padding:"8px 20px", display:"flex", gap:8, alignItems:"center", direction:"rtl", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
+          <span style={{ fontSize:12, color:"rgba(255,255,255,0.8)" }}>الشركة:</span>
+          {companies.map((c:any)=>(
+            <button key={c.id} onClick={()=>setCompanyId(c.id)}
+              style={{ padding:"4px 12px", borderRadius:6, border:"none", background:companyId===c.id?"rgba(255,255,255,0.25)":"transparent", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:companyId===c.id?700:400, fontFamily:"Cairo,sans-serif" }}>
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: companies && companies.length > 1 ? 36 : 0 }}>
+        <HelpdeskPortal companyId={companyId} co={co} user={user} onSwitch={onSwitch}/>
+      </div>
+    </div>
+  );
+}
+
+
+function PortalLanding({ user, onChoose }:{ user:any; onChoose:(mode:string)=>void }) {
+  const [hovered, setHovered] = useState<string|null>(null);
+
+  const portals = [
+    {
+      id:    "admin",
+      icon:  "📊",
+      title: "لوحة الإدارة المالية",
+      desc:  "التحليل المالي الشامل — القوائم المالية والتقارير ومراكز التكلفة",
+      color: "#2563EB",
+      bg:    "linear-gradient(135deg,#1D4ED8,#2563EB,#3B82F6)",
+      features:["القوائم المالية","مراكز التكلفة","تقارير Odoo","الميزانيات","DuPont & Altman"],
+    },
+    {
+      id:    "helpdesk",
+      icon:  "🎫",
+      title: "بوابة الدعم الفني",
+      desc:  "إدارة وتحليل التذاكر — الأداء والـ SLA والوكلاء والعملاء",
+      color: "#714B67",
+      bg:    "linear-gradient(135deg,#5a3c52,#714B67,#875A7B)",
+      features:["تذاكر الدعم","تحليل SLA","أداء الوكلاء","رضا العملاء","الاتجاهات"],
+    },
+    {
+      id:    "executive",
+      icon:  "🎯",
+      title: "لوحة تنفيذية",
+      desc:  "ملخص سريع لأداء المجموعة — KPIs والتنبيهات والرسوم التفاعلية",
+      color: "#059669",
+      bg:    "linear-gradient(135deg,#047857,#059669,#10B981)",
+      features:["KPIs تفاعلية","مقارنة الشركات","تنبيهات ذكية","رسوم مباشرة","مراكز التكلفة"],
+    },
+  ];
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#F0F2F5", display:"flex", flexDirection:"column", fontFamily:"Cairo, system-ui, sans-serif", direction:"rtl" }}>
+      {/* Top bar */}
+      <div style={{ background:"#fff", height:56, display:"flex", alignItems:"center", padding:"0 28px", boxShadow:"0 1px 4px rgba(0,0,0,0.08)", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:32,height:32,borderRadius:8,background:"linear-gradient(135deg,#2563EB,#1D4ED8)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:900,fontSize:13 }}>CF</div>
+          <span style={{ fontSize:16,fontWeight:800,color:"#1E293B" }}>CFO Intelligence</span>
+        </div>
+        <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+          <div style={{ width:32,height:32,borderRadius:"50%",background:"linear-gradient(135deg,#0D9488,#047d7a)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:13 }}>
+            {(user?.name||"U").charAt(0)}
+          </div>
+          <span style={{ fontSize:13,fontWeight:600,color:"#334155" }}>{user?.name||"المستخدم"}</span>
+        </div>
+      </div>
+
+      {/* Hero */}
+      <div style={{ background:"linear-gradient(120deg,#1E293B 0%,#2563EB 60%,#3B82F6 100%)", padding:"52px 32px 44px", textAlign:"center", color:"#fff", position:"relative", overflow:"hidden" }}>
+        <div style={{ position:"absolute",inset:0,background:"radial-gradient(circle at 20% 50%,rgba(255,255,255,0.06) 0%,transparent 60%)",pointerEvents:"none" }}/>
+        <p style={{ fontSize:14,opacity:0.8,marginBottom:8,letterSpacing:1 }}>مرحباً، {user?.name||"المستخدم"}</p>
+        <h1 style={{ fontSize:32,fontWeight:900,margin:"0 0 12px",letterSpacing:-0.5 }}>اختر لوحة التحكم</h1>
+        <p style={{ fontSize:15,opacity:0.85,maxWidth:520,margin:"0 auto" }}>
+          اختر الواجهة التي تناسب احتياجك اليوم — يمكنك التبديل بينها في أي وقت
+        </p>
+      </div>
+
+      {/* Cards */}
+      <div style={{ flex:1, padding:"36px 32px", maxWidth:1100, margin:"0 auto", width:"100%" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:20 }}>
+          {portals.map(p=>(
+            <div key={p.id}
+              onClick={()=>onChoose(p.id)}
+              onMouseEnter={()=>setHovered(p.id)}
+              onMouseLeave={()=>setHovered(null)}
+              style={{
+                background:"#fff", borderRadius:16, overflow:"hidden",
+                border:`2px solid ${hovered===p.id?p.color:"#E2E8F0"}`,
+                boxShadow: hovered===p.id?`0 12px 40px ${p.color}25`:"0 2px 12px rgba(0,0,0,0.06)",
+                cursor:"pointer", transition:"all 0.25s",
+                transform: hovered===p.id?"translateY(-4px)":"none",
+              }}>
+              {/* Banner */}
+              <div style={{ background:p.bg, padding:"28px 24px 24px", position:"relative", overflow:"hidden" }}>
+                <div style={{ position:"absolute",top:-20,right:-20,width:100,height:100,borderRadius:"50%",background:"rgba(255,255,255,0.08)",pointerEvents:"none" }}/>
+                <div style={{ fontSize:44,marginBottom:12 }}>{p.icon}</div>
+                <h3 style={{ fontSize:18,fontWeight:900,color:"#fff",margin:"0 0 6px",letterSpacing:-0.3 }}>{p.title}</h3>
+                <p style={{ fontSize:13,color:"rgba(255,255,255,0.88)",margin:0,lineHeight:1.6 }}>{p.desc}</p>
+              </div>
+              {/* Features */}
+              <div style={{ padding:"18px 22px 22px" }}>
+                <p style={{ fontSize:11,fontWeight:700,color:"#94A3B8",letterSpacing:1,marginBottom:12,textTransform:"uppercase" }}>المميزات</p>
+                <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+                  {p.features.map((f,i)=>(
+                    <div key={i} style={{ display:"flex",alignItems:"center",gap:8 }}>
+                      <div style={{ width:6,height:6,borderRadius:"50%",background:p.color,flexShrink:0 }}/>
+                      <span style={{ fontSize:13,color:"#475569" }}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <button style={{ width:"100%",marginTop:20,padding:"11px",borderRadius:9,border:`2px solid ${p.color}`,background:hovered===p.id?p.color:"transparent",color:hovered===p.id?"#fff":p.color,fontSize:13,fontWeight:800,cursor:"pointer",transition:"all 0.2s",fontFamily:"Cairo, sans-serif" }}>
+                  {hovered===p.id?"← الدخول الآن":`فتح ${p.title}`}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Quick note */}
+        <div style={{ marginTop:24,padding:"14px 20px",borderRadius:10,background:"#fff",border:"1px solid #E2E8F0",display:"flex",gap:10,alignItems:"center" }}>
+          <span style={{ fontSize:18 }}>💡</span>
+          <span style={{ fontSize:13,color:"#64748B" }}>يمكنك التبديل بين اللوحات في أي وقت من القائمة العلوية أو بالضغط على الشعار</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎫 بوابة الدعم الفني — تصميم Odoo Portal
+// ══════════════════════════════════════════════════════════════════════════════
+function HelpdeskPortal({ companyId, co, user, onSwitch }:any) {
+  const yr  = new Date().getFullYear();
   const [dF, setDF]       = useState(`${yr}-01-01`);
   const [dT, setDT]       = useState(new Date().toISOString().split("T")[0]);
-  const [tab, setTab]     = useState<"overview"|"performance"|"sla"|"trends"|"agents"|"customers"|"tickets">("overview");
-  const [search, setSearch]   = useState("");
-  const [filterStage, setStage] = useState("all");
-  const [filterPrio, setPrio]   = useState("all");
-  const [filterTeam, setTeam]   = useState("all");
-  const [selTicket, setTicket]  = useState<any>(null);
+  const [activeNav, setNav] = useState("overview");
+  const [search, setSearch] = useState("");
+  const [filterStatus, setStatus] = useState("all");
+  const [selTicket, setTicket] = useState<any>(null);
 
-  const { data, isLoading, error } = (trpc as any).journal.getHelpdeskData.useQuery(
+  const { data, isLoading } = (trpc as any).journal.getHelpdeskData.useQuery(
     { companyId, dateFrom:dF, dateTo:dT, limit:1000 },
     { enabled:!!companyId, staleTime:3*60*1000, retry:1 }
   );
 
-  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  const s: any    = data?.summary || {};
+  const tix: any[]= data?.tickets  || [];
+  const slaPct    = s.total > 0 ? Math.round((s.total - (s.slaFailed||0)) / s.total * 100) : 0;
 
-  const isErr = !isLoading && (error || !data || !data.summary);
-
-  const s     = data?.summary || { total:0, open:0, closed:0, slaFailed:0, highPriority:0, overdue:0, avgResolutionHours:0 };
-  const tix: any[] = data?.tickets   || [];
-  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
-  const PIE = [C.primary,C.teal,C.amber,C.purple,C.red,C.green,"#06B6D4","#F97316","#8B5CF6","#EC4899"];
-
-  const prioColor:Record<string,{c:string,bg:string}> = {
-    "عادي":{c:C.teal,bg:C.tealLight}, "منخفض":{c:C.muted,bg:C.bg},
-    "عالي":{c:C.amber,bg:C.amberLight}, "عاجل":{c:C.red,bg:C.redLight},
+  // Colors — Odoo palette
+  const OC = {
+    primary:"#714B67", primaryDark:"#5a3c52", primaryLight:"#875A7B", primarySoft:"#f5eef3",
+    accent:"#00A09D", accentSoft:"#e6f5f4",
+    bg:"#F8F8F8", surface:"#fff", border:"#E6E6E6",
+    text:"#2c2c2c", textSoft:"#5b5b5b", textMuted:"#8c8c8c",
+    urgent:"#D14545", urgentBg:"#fce8e8",
+    high:"#E8923C",   highBg:"#fdefe0",
+    medium:"#3B82C4", mediumBg:"#e3eef7",
+    done:"#28a745",   doneBg:"#e3f6e6",
+    progress:"#F0B429",progressBg:"#fdf3d8",
   };
 
-  // ── حسابات متقدمة ──────────────────────────────────────────────────────────
-  // حسب الشهر
-  const byMonth: Record<string,{open:number,closed:number}> = {};
-  for (const t of tix) {
-    const m = (t.created||"").slice(0,7);
-    if (!m) continue;
-    if (!byMonth[m]) byMonth[m] = {open:0,closed:0};
-    if (t.closed) byMonth[m].closed++; else byMonth[m].open++;
-  }
-  const monthEntries = Object.entries(byMonth).sort(([a],[b])=>a.localeCompare(b));
-  const maxMonth = Math.max(...monthEntries.map(([,v])=>v.open+v.closed), 1);
+  const prioStyle: Record<string,{c:string,bg:string,badge:string}> = {
+    "عاجل": {c:OC.urgent, bg:OC.urgentBg, badge:"badge-urgent"},
+    "عالي": {c:OC.high,   bg:OC.highBg,   badge:"badge-high"},
+    "عادي": {c:OC.medium, bg:OC.mediumBg, badge:"badge-medium"},
+    "منخفض":{c:"#7C8B9A",bg:"#eef1f4",   badge:"badge-low"},
+  };
 
-  // حسب يوم الأسبوع
-  const days = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
-  const byDay: number[] = [0,0,0,0,0,0,0];
-  for (const t of tix) {
-    if (t.created) { const d = new Date(t.created).getDay(); byDay[d]++; }
-  }
-  const maxDay = Math.max(...byDay, 1);
-
-  // حسب الساعة
-  const byHour: number[] = Array(24).fill(0);
-  for (const t of tix) {
-    if (t.created) {
-      try { const d = new Date(t.created); byHour[d.getHours()]++; } catch{}
-    }
-  }
-
-  // Agent workload
-  const agentMap: Record<string,{total:number,open:number,closed:number,overdue:number,avgHours:number,hours:number[]}> = {};
-  for (const t of tix) {
-    const a = t.assignee || "غير معين";
-    if (!agentMap[a]) agentMap[a] = {total:0,open:0,closed:0,overdue:0,avgHours:0,hours:[]};
-    agentMap[a].total++;
-    if (t.closed) agentMap[a].closed++; else agentMap[a].open++;
-    if (t.isOverdue) agentMap[a].overdue++;
-    if (t.closed && t.created) {
-      const h = (new Date(t.closed).getTime() - new Date(t.created).getTime()) / 3600000;
-      if (h > 0) agentMap[a].hours.push(h);
-    }
-  }
-  const agents = Object.entries(agentMap).map(([name,d])=>({
-    name, ...d,
-    avgHours: d.hours.length ? Math.round(d.hours.reduce((s,v)=>s+v,0)/d.hours.length) : 0,
-    closedRate: d.total > 0 ? Math.round(d.closed/d.total*100) : 0,
-  })).sort((a,b)=>b.total-a.total);
-
-  // Customer analysis
-  const custMap: Record<string,{total:number,open:number,closed:number,priorities:string[]}> = {};
-  for (const t of tix) {
-    const c = t.partner || "غير معروف";
-    if (!custMap[c]) custMap[c] = {total:0,open:0,closed:0,priorities:[]};
-    custMap[c].total++;
-    if (t.closed) custMap[c].closed++; else custMap[c].open++;
-    custMap[c].priorities.push(t.priority);
-  }
-  const customers = Object.entries(custMap).map(([name,d])=>({
-    name, ...d,
-    urgentCount: d.priorities.filter(p=>p==="عاجل").length,
-    satisfaction: d.total > 0 ? Math.round(d.closed/d.total*100) : 0,
-  })).sort((a,b)=>b.total-a.total);
-
-  // SLA analysis
-  const slaTotal  = tix.length;
-  const slaPassed = tix.filter((t:any)=>!t.slaFail).length;
-  const slaPct    = slaTotal > 0 ? Math.round(slaPassed/slaTotal*100) : 0;
-  const overdueByTeam: Record<string,number> = {};
-  for (const t of tix) { if (t.isOverdue) { const tm = t.team||"—"; overdueByTeam[tm]=(overdueByTeam[tm]||0)+1; } }
-
-  // Resolution time buckets
-  const rtBuckets = [{l:"<1 ساعة",min:0,max:1},{l:"1-8 ساعات",min:1,max:8},{l:"8-24 ساعة",min:8,max:24},{l:"1-3 أيام",min:24,max:72},{l:">3 أيام",min:72,max:99999}];
-  const rtCounts: number[] = Array(5).fill(0);
-  for (const t of tix) {
-    if (t.closed && t.created) {
-      const h = (new Date(t.closed).getTime()-new Date(t.created).getTime())/3600000;
-      const idx = rtBuckets.findIndex(b=>h>=b.min&&h<b.max);
-      if (idx>=0) rtCounts[idx]++;
-    }
-  }
-
-  const filtered = tix.filter((t:any) => {
+  // Filter
+  const filtered = tix.filter((t:any)=>{
     if (search && !t.name?.includes(search) && !t.partner?.includes(search)) return false;
-    if (filterStage!=="all" && t.stage!==filterStage) return false;
-    if (filterPrio!=="all"  && t.priority!==filterPrio) return false;
-    if (filterTeam!=="all"  && t.team!==filterTeam) return false;
+    if (filterStatus==="open"   && t.closed)  return false;
+    if (filterStatus==="closed" && !t.closed) return false;
+    if (filterStatus==="overdue" && !t.isOverdue) return false;
+    if (filterStatus==="sla"    && !t.slaFail)    return false;
     return true;
   });
 
-  const TABS = [
-    {k:"overview",    l:"📊 نظرة عامة"},
-    {k:"performance", l:"⚡ الأداء"},
-    {k:"sla",         l:"🎯 SLA"},
-    {k:"trends",      l:"📈 الاتجاهات"},
-    {k:"agents",      l:"👥 الوكلاء"},
-    {k:"customers",   l:"🏢 العملاء"},
-    {k:"tickets",     l:"📋 التذاكر"},
+  // Nav items
+  const navItems = [
+    {id:"overview",  icon:"📊",  label:"لوحة المراقبة"},
+    {id:"tickets",   icon:"🎫",  label:"التذاكر",   badge:s.open},
+    {id:"overdue",   icon:"⏰",  label:"المتأخرة",  badge:s.overdue},
+    {id:"sla",       icon:"🎯",  label:"SLA"},
+    {id:"agents",    icon:"👥",  label:"الوكلاء"},
+    {id:"customers", icon:"🏢",  label:"العملاء"},
   ];
 
+  // Agents calculated
+  const agentMap: Record<string,any> = {};
+  for (const t of tix) {
+    const a = t.assignee||"غير معين";
+    if (!agentMap[a]) agentMap[a]={name:a,total:0,open:0,closed:0,overdue:0,hours:[]};
+    agentMap[a].total++;
+    if (t.closed) { agentMap[a].closed++; } else agentMap[a].open++;
+    if (t.isOverdue) agentMap[a].overdue++;
+    if (t.closed&&t.created) agentMap[a].hours.push((new Date(t.closed).getTime()-new Date(t.created).getTime())/3600000);
+  }
+  const agents = Object.values(agentMap).map((a:any)=>({
+    ...a, avg:a.hours.length?Math.round(a.hours.reduce((s:number,v:number)=>s+v,0)/a.hours.length):0,
+    rate:a.total>0?Math.round(a.closed/a.total*100):0,
+  })).sort((a:any,b:any)=>b.total-a.total);
+
+  // Customer map
+  const custMap: Record<string,any> = {};
+  for (const t of tix) {
+    const c = t.partner||"غير معروف";
+    if (!custMap[c]) custMap[c]={name:c,total:0,open:0,urgent:0};
+    custMap[c].total++;
+    if (!t.closed) custMap[c].open++;
+    if (t.priority==="عاجل") custMap[c].urgent++;
+  }
+  const customers = Object.values(custMap).sort((a:any,b:any)=>b.total-a.total);
+
+  if (!companyId) return (
+    <div style={{ fontFamily:"Cairo,sans-serif",direction:"rtl",minHeight:"100vh",background:OC.bg,display:"flex",alignItems:"center",justifyContent:"center" }}>
+      <p style={{ color:OC.textMuted }}>اختر شركة لعرض بيانات الدعم الفني</p>
+    </div>
+  );
+
   return (
-    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
-      {/* Header */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:8 }}>
-        <div>
-          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎫 تحليلات الدعم الفني — Helpdesk</h2>
-          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
-            <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
-            {!isLoading && !isErr && <>
-              <Badge label={`${s.total} تذكرة`} bg={C.primaryLight} color={C.primary}/>
-              <Badge label={`${slaPct}% SLA`} bg={slaPct>80?C.greenLight:C.amberLight} color={slaPct>80?C.green:C.amber}/>
-              {s.overdue>0 && <Badge label={`⏰ ${s.overdue} متأخرة`} bg={C.redLight} color={C.red}/>}
-            </>}
-          </div>
+    <div style={{ fontFamily:"'IBM Plex Sans Arabic','Cairo',sans-serif",direction:"rtl",minHeight:"100vh",background:OC.bg,color:OC.text }}>
+
+      {/* ── TOP BAR ── */}
+      <header style={{ background:OC.surface,height:56,borderBottom:`1px solid ${OC.border}`,display:"flex",alignItems:"center",padding:"0 24px",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 2px rgba(0,0,0,0.04)" }}>
+        <div style={{ display:"flex",alignItems:"center",gap:10,paddingLeft:24,marginLeft:24,borderLeft:`1px solid ${OC.border}` }}>
+          <div style={{ width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${OC.primary},${OC.primaryLight})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:800,fontSize:13,boxShadow:`0 2px 6px ${OC.primary}40` }}>HD</div>
+          <span style={{ fontWeight:700,fontSize:16,color:OC.primary }}>Helpdesk Portal</span>
         </div>
-        <div style={{ display:"flex", gap:6 }}>
-          {["هذا الشهر","هذه السنة","آخر 3 أشهر"].map((l,i)=>(
-            <button key={i} onClick={()=>{
-              const now=new Date();
-              if(i===0){setDF(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`);setDT(now.toISOString().split("T")[0]);}
-              if(i===1){setDF(`${now.getFullYear()}-01-01`);setDT(now.toISOString().split("T")[0]);}
-              if(i===2){const d=new Date(now);d.setMonth(d.getMonth()-3);setDF(d.toISOString().split("T")[0]);setDT(now.toISOString().split("T")[0]);}
-            }} style={{ padding:"5px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:C.bg,cursor:"pointer",fontSize:11,color:C.textSec }}>
-              {l}
-            </button>
+        <nav style={{ display:"flex",alignItems:"center",gap:6,fontSize:13,color:OC.textMuted }}>
+          <button onClick={onSwitch} style={{ background:"transparent",border:"none",cursor:"pointer",color:OC.textMuted,fontSize:13 }}>الرئيسية</button>
+          <span style={{ color:"#ccc" }}>›</span>
+          <span style={{ color:OC.text,fontWeight:600 }}>الدعم الفني</span>
+        </nav>
+        <div style={{ flex:1 }}/>
+        {/* Search */}
+        <div style={{ position:"relative",marginLeft:12 }}>
+          <input placeholder="🔍 بحث في التذاكر..." value={search} onChange={e=>setSearch(e.target.value)}
+            style={{ width:260,height:36,border:`1px solid ${OC.border}`,borderRadius:6,padding:"0 36px 0 12px",fontSize:13,background:"#FBFAFC",fontFamily:"inherit",outline:"none" }}
+            onFocus={e=>(e.target as any).style.borderColor=OC.primary}
+            onBlur={e=>(e.target as any).style.borderColor=OC.border}/>
+        </div>
+        {/* Date quick */}
+        <div style={{ display:"flex",gap:4,marginLeft:10 }}>
+          {[["هذا الشهر",`${yr}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`,new Date().toISOString().split("T")[0]],["هذه السنة",`${yr}-01-01`,new Date().toISOString().split("T")[0]]].map(([l,f,t])=>(
+            <button key={l} onClick={()=>{setDF(f);setDT(t);}} style={{ padding:"5px 10px",border:`1px solid ${OC.border}`,borderRadius:6,background:"transparent",fontSize:12,cursor:"pointer",color:OC.textSoft,fontFamily:"inherit" }}>{l}</button>
           ))}
-          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11,outline:"none" }}/>
-          <span style={{ color:C.muted,alignSelf:"center" }}>—</span>
-          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11,outline:"none" }}/>
         </div>
-      </div>
+        {/* User */}
+        <div style={{ display:"flex",alignItems:"center",gap:8,padding:"4px 14px 4px 4px",borderRadius:24,background:"#FBFAFC",marginRight:12,cursor:"pointer" }}>
+          <div style={{ width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${OC.accent},#047d7a)`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12 }}>
+            {(user?.name||"U").charAt(0)}
+          </div>
+          <span style={{ fontSize:13,fontWeight:600 }}>{user?.name}</span>
+        </div>
+        <button onClick={onSwitch} style={{ padding:"7px 14px",borderRadius:7,border:`1px solid ${OC.border}`,background:"transparent",color:OC.textSoft,cursor:"pointer",fontSize:12,fontFamily:"inherit" }}>
+          ⇄ تغيير اللوحة
+        </button>
+      </header>
 
-      {/* Tabs */}
-      <div style={{ display:"flex",gap:2,marginBottom:16,borderBottom:`2px solid ${C.border}`,overflowX:"auto" }}>
-        {TABS.map(t=>(
-          <button key={t.k} onClick={()=>setTab(t.k as any)}
-            style={{ padding:"9px 16px",border:"none",borderBottom:`2.5px solid ${tab===t.k?C.primary:"transparent"}`,background:"transparent",color:tab===t.k?C.primary:C.textSec,cursor:"pointer",fontSize:12,fontWeight:tab===t.k?800:400,marginBottom:-2,whiteSpace:"nowrap" }}>
-            {t.l}
-          </button>
-        ))}
-      </div>
+      <div style={{ display:"grid",gridTemplateColumns:"230px 1fr",minHeight:"calc(100vh - 56px)" }}>
 
-      {isLoading && <div style={{ textAlign:"center",padding:80 }}><Spinner/><p style={{ color:C.muted,marginTop:12 }}>جاري تحليل بيانات Helpdesk...</p></div>}
-      {isErr    && <Card style={{ padding:40,textAlign:"center" }}><p style={{ color:C.red,fontWeight:700 }}>⚠️ تعذّر الاتصال — تأكد من تفعيل موديل Helpdesk في Odoo</p></Card>}
+        {/* ── SIDEBAR ── */}
+        <aside style={{ background:OC.surface,borderLeft:`1px solid ${OC.border}`,padding:"24px 0",position:"sticky",top:56,height:"calc(100vh - 56px)",overflowY:"auto" }}>
+          {/* Company */}
+          <div style={{ padding:"0 20px 20px",borderBottom:`1px solid ${OC.border}`,marginBottom:16 }}>
+            <p style={{ fontSize:10,fontWeight:700,letterSpacing:2,color:OC.textMuted,textTransform:"uppercase",marginBottom:8 }}>الشركة</p>
+            <div style={{ padding:"10px 12px",borderRadius:8,background:OC.primarySoft,border:`1px solid ${OC.primary}20` }}>
+              <p style={{ fontSize:13,fontWeight:700,color:OC.primary,margin:0 }}>{co?.name||"—"}</p>
+            </div>
+          </div>
 
-      {!isLoading && !isErr && <>
-
-      {/* ════ OVERVIEW ════ */}
-      {tab==="overview" && (
-        <>
-          {/* KPIs */}
-          <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14 }}>
-            {[
-              {l:"إجمالي التذاكر",    v:String(s.total),              icon:"🎫",c:C.primary, bg:C.primaryLight, sub:"الفترة المحددة"},
-              {l:"مفتوحة",            v:String(s.open),               icon:"🔓",c:C.amber,   bg:C.amberLight,   sub:`${s.total>0?Math.round(s.open/s.total*100):0}% من الإجمالي`},
-              {l:"مغلقة ✅",          v:String(s.closed),             icon:"✅",c:C.green,   bg:C.greenLight,   sub:`${s.total>0?Math.round(s.closed/s.total*100):0}% معدل الإغلاق`},
-              {l:"SLA فشل",           v:String(s.slaFailed),          icon:"❌",c:C.red,     bg:C.redLight,     sub:`${slaTotal>0?Math.round(s.slaFailed/slaTotal*100):0}% من التذاكر`},
-              {l:"متأخرة",            v:String(s.overdue),            icon:"⏰",c:C.red,     bg:C.redLight,     sub:"تجاوزت الموعد"},
-              {l:"أولوية عالية/عاجل", v:String(s.highPriority),       icon:"🔴",c:C.amber,   bg:C.amberLight,   sub:"تحتاج تدخل سريع"},
-              {l:"متوسط وقت الحل",    v:`${s.avgResolutionHours}س`,   icon:"⏱️",c:C.teal,    bg:C.tealLight,    sub:"ساعة"},
-              {l:"SLA نجح",           v:`${slaPct}%`,                  icon:"🎯",c:slaPct>80?C.green:C.amber, bg:slaPct>80?C.greenLight:C.amberLight, sub:`${slaPassed} تذكرة`},
-            ].map((k,i)=>(
-              <div key={i} style={{ padding:"14px 16px",borderRadius:12,background:k.bg }}>
-                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
-                  <div>
-                    <p style={{ fontSize:10,color:C.textSec,margin:"0 0 4px" }}>{k.l}</p>
-                    <p style={{ fontSize:22,fontWeight:900,color:k.c,margin:"0 0 2px" }}>{k.v}</p>
-                    <p style={{ fontSize:10,color:C.muted,margin:0 }}>{k.sub}</p>
-                  </div>
-                  <span style={{ fontSize:20 }}>{k.icon}</span>
-                </div>
+          <div style={{ marginBottom:24 }}>
+            <p style={{ fontSize:10,fontWeight:700,letterSpacing:2,color:OC.textMuted,textTransform:"uppercase",padding:"0 24px 10px" }}>القائمة</p>
+            {navItems.map(item=>(
+              <div key={item.id} onClick={()=>setNav(item.id)}
+                style={{ display:"flex",alignItems:"center",gap:12,padding:"10px 24px",color:activeNav===item.id?OC.primary:OC.textSoft,cursor:"pointer",fontSize:14,fontWeight:activeNav===item.id?600:500,borderRight:`3px solid ${activeNav===item.id?OC.primary:"transparent"}`,background:activeNav===item.id?OC.primarySoft:"transparent",transition:"all 0.15s" }}>
+                <span style={{ fontSize:17 }}>{item.icon}</span>
+                <span style={{ flex:1 }}>{item.label}</span>
+                {item.badge && item.badge > 0 && (
+                  <span style={{ background:activeNav===item.id?OC.primary:"#bbb",color:"#fff",fontSize:11,padding:"1px 8px",borderRadius:10,fontWeight:700 }}>{item.badge}</span>
+                )}
               </div>
             ))}
           </div>
 
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14 }}>
-            {/* By Stage */}
-            <Card style={{ padding:"18px 20px" }}>
-              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>📊 حسب الحالة</p>
-              {(data.byStage||[]).slice(0,8).map((st:any,i:number)=>(
-                <div key={i} style={{ marginBottom:10 }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}>
-                    <span style={{ fontSize:11,color:C.text }}>{st.name}</span>
-                    <span style={{ fontSize:11,fontWeight:700,color:PIE[i%PIE.length] }}>{st.count} ({s.total>0?Math.round(st.count/s.total*100):0}%)</span>
-                  </div>
-                  <div style={{ background:C.border,borderRadius:4,height:7 }}>
-                    <div style={{ width:`${s.total>0?st.count/s.total*100:0}%`,height:"100%",background:PIE[i%PIE.length],borderRadius:4,transition:"width 0.5s" }}/>
-                  </div>
-                </div>
-              ))}
-            </Card>
-
-            {/* By Team */}
-            <Card style={{ padding:"18px 20px" }}>
-              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>👥 حسب الفريق</p>
-              {(data.byTeam||[]).slice(0,8).map((tm:any,i:number)=>(
-                <div key={i} style={{ marginBottom:10 }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}>
-                    <span style={{ fontSize:11,color:C.text }}>{tm.name}</span>
-                    <span style={{ fontSize:11,fontWeight:700,color:C.primary }}>{tm.count}</span>
-                  </div>
-                  <div style={{ background:C.border,borderRadius:4,height:7 }}>
-                    <div style={{ width:`${s.total>0?tm.count/s.total*100:0}%`,height:"100%",background:C.primary,borderRadius:4 }}/>
-                  </div>
-                </div>
-              ))}
-            </Card>
-
-            {/* By Priority */}
-            <Card style={{ padding:"18px 20px" }}>
-              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>🔴 حسب الأولوية</p>
-              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12 }}>
-                {(data.byPriority||[]).map((p:any,i:number)=>{
-                  const pc=prioColor[p.name]||{c:C.muted,bg:C.bg};
-                  return (
-                    <div key={i} style={{ padding:"12px",borderRadius:9,background:pc.bg,textAlign:"center" }}>
-                      <p style={{ fontSize:10,color:pc.c,margin:"0 0 4px" }}>{p.name}</p>
-                      <p style={{ fontSize:22,fontWeight:900,color:pc.c,margin:"0 0 2px" }}>{p.count}</p>
-                      <p style={{ fontSize:9,color:C.muted,margin:0 }}>{s.total>0?Math.round(p.count/s.total*100):0}%</p>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Type breakdown */}
-              <p style={{ fontWeight:700,fontSize:11,color:C.textSec,margin:"8px 0 6px" }}>حسب النوع:</p>
-              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
-                {(data.byType||[]).slice(0,6).map((tp:any,i:number)=>(
-                  <span key={i} style={{ padding:"3px 8px",borderRadius:12,background:PIE[i%PIE.length]+"20",color:PIE[i%PIE.length],fontSize:10,fontWeight:600 }}>
-                    {tp.name}: {tp.count}
-                  </span>
-                ))}
-              </div>
-            </Card>
+          {/* SLA summary in sidebar */}
+          <div style={{ margin:"0 16px",padding:"14px 16px",borderRadius:10,background:OC.primarySoft,border:`1px solid ${OC.primary}20` }}>
+            <p style={{ fontSize:11,color:OC.primary,fontWeight:700,margin:"0 0 8px" }}>معدل SLA</p>
+            <p style={{ fontSize:28,fontWeight:900,color:slaPct>80?OC.done:slaPct>60?OC.progress:OC.urgent,margin:"0 0 6px" }}>{slaPct}%</p>
+            <div style={{ background:"#E2E8F0",borderRadius:4,height:6,overflow:"hidden" }}>
+              <div style={{ width:`${slaPct}%`,height:"100%",background:slaPct>80?OC.done:slaPct>60?OC.progress:OC.urgent,borderRadius:4 }}/>
+            </div>
+            <p style={{ fontSize:11,color:OC.textMuted,margin:"6px 0 0" }}>الهدف: 90%</p>
           </div>
-        </>
-      )}
+        </aside>
 
-      {/* ════ PERFORMANCE ════ */}
-      {tab==="performance" && (
-        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
-          {/* Resolution time distribution */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>⏱️ توزيع وقت الحل</p>
-            <div style={{ display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10 }}>
-              {rtBuckets.map((b,i)=>(
-                <div key={i} style={{ textAlign:"center" }}>
-                  <div style={{ height:80,display:"flex",alignItems:"flex-end",justifyContent:"center",marginBottom:6 }}>
-                    <div style={{ width:"60%",background:PIE[i],borderRadius:"4px 4px 0 0",height:`${rtCounts[i]>0?Math.max(8,(rtCounts[i]/Math.max(...rtCounts,1))*80):4}px`,transition:"height 0.5s",opacity:0.85 }}/>
-                  </div>
-                  <p style={{ fontSize:10,color:C.textSec,margin:"0 0 2px" }}>{b.l}</p>
-                  <p style={{ fontSize:16,fontWeight:900,color:PIE[i],margin:0 }}>{rtCounts[i]}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
+        {/* ── MAIN ── */}
+        <main style={{ padding:"28px 32px 60px",maxWidth:1300 }}>
 
-          {/* Day of week heatmap */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📅 التذاكر حسب يوم الأسبوع</p>
-            <div style={{ display:"flex",gap:8 }}>
-              {days.map((d,i)=>(
-                <div key={i} style={{ flex:1,textAlign:"center" }}>
-                  <div style={{ height:80,display:"flex",alignItems:"flex-end",justifyContent:"center",marginBottom:6 }}>
-                    <div style={{ width:"70%",background:byDay[i]===Math.max(...byDay)?C.red:C.primary,borderRadius:"4px 4px 0 0",height:`${Math.max(6,(byDay[i]/maxDay)*80)}px`,opacity:0.8 }}/>
-                  </div>
-                  <p style={{ fontSize:9,color:C.textSec,margin:"0 0 2px" }}>{d.slice(0,3)}</p>
-                  <p style={{ fontSize:13,fontWeight:700,color:byDay[i]===Math.max(...byDay)?C.red:C.primary,margin:0 }}>{byDay[i]}</p>
-                </div>
-              ))}
-            </div>
-            <p style={{ fontSize:11,color:C.muted,margin:"10px 0 0",textAlign:"center" }}>
-              أكثر يوم: <strong style={{ color:C.red }}>{days[byDay.indexOf(Math.max(...byDay))]}</strong> ({Math.max(...byDay)} تذكرة)
-            </p>
-          </Card>
-
-          {/* Hourly distribution */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 12px" }}>🕐 التذاكر حسب الساعة</p>
-            <div style={{ display:"flex",gap:2,alignItems:"flex-end",height:60 }}>
-              {byHour.map((v,h)=>(
-                <div key={h} title={`${h}:00 — ${v} تذكرة`} style={{ flex:1,background:v===Math.max(...byHour)?C.red:v>0?C.primary+"80":C.border,borderRadius:"2px 2px 0 0",height:`${Math.max(2,(v/Math.max(...byHour,1))*60)}px`,cursor:"pointer",transition:"height 0.4s" }}/>
-              ))}
-            </div>
-            <div style={{ display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:C.muted }}>
-              <span>12 ص</span><span>6 ص</span><span>12 ظ</span><span>6 م</span><span>11 م</span>
-            </div>
-            <p style={{ fontSize:11,color:C.muted,margin:"8px 0 0",textAlign:"center" }}>
-              ذروة التذاكر: الساعة <strong style={{ color:C.red }}>{byHour.indexOf(Math.max(...byHour))}:00</strong>
-            </p>
-          </Card>
-
-          {/* Open vs Closed trend */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📈 مفتوحة مقابل مغلقة — شهرياً</p>
-            <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:6 }}>
-              {monthEntries.map(([m,v],i)=>(
-                <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",gap:1 }} title={m}>
-                  <div style={{ width:"100%",background:C.amber,borderRadius:"2px 2px 0 0",height:`${(v.open/maxMonth)*70}px`,opacity:0.8 }}/>
-                  <div style={{ width:"100%",background:C.green,borderRadius:"2px 2px 0 0",height:`${(v.closed/maxMonth)*70}px`,opacity:0.8 }}/>
-                </div>
-              ))}
-            </div>
-            <div style={{ display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted }}>
-              {monthEntries.map(([m],i)=><span key={i}>{arM[parseInt(m.split("-")[1])-1]?.slice(0,3)}</span>)}
-            </div>
-            <div style={{ display:"flex",gap:14,justifyContent:"center",marginTop:8 }}>
-              {[{c:C.amber,l:"مفتوحة"},{c:C.green,l:"مغلقة"}].map(s=>(
-                <div key={s.l} style={{ display:"flex",gap:5,alignItems:"center" }}>
-                  <div style={{ width:10,height:10,borderRadius:2,background:s.c }}/><span style={{ fontSize:11,color:C.textSec }}>{s.l}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* ════ SLA ════ */}
-      {tab==="sla" && (
-        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
-          {/* SLA Gauge */}
-          <Card style={{ padding:"24px" }}>
-            <div style={{ display:"flex",gap:24,alignItems:"center",flexWrap:"wrap" }}>
-              {/* Big gauge */}
-              <div style={{ textAlign:"center",minWidth:180 }}>
-                <svg viewBox="0 0 200 120" style={{ width:200,height:120 }}>
-                  <path d="M20,100 A80,80 0 0,1 180,100" fill="none" stroke={C.border} strokeWidth="16" strokeLinecap="round"/>
-                  <path d="M20,100 A80,80 0 0,1 180,100" fill="none" stroke={slaPct>80?C.green:slaPct>60?C.amber:C.red} strokeWidth="16" strokeLinecap="round"
-                    strokeDasharray={`${(slaPct/100)*251.2} 251.2`}/>
-                  <text x="100" y="85" textAnchor="middle" fontSize="28" fontWeight="900" fill={slaPct>80?C.green:slaPct>60?C.amber:C.red}>{slaPct}%</text>
-                  <text x="100" y="108" textAnchor="middle" fontSize="11" fill={C.textSec}>معدل SLA</text>
+          {/* Hero Banner */}
+          <div style={{ background:`linear-gradient(120deg,${OC.primary} 0%,${OC.primaryLight} 60%,#9b6884 100%)`,color:"#fff",borderRadius:12,padding:"28px 32px",marginBottom:24,position:"relative",overflow:"hidden",boxShadow:`0 4px 14px ${OC.primary}30` }}>
+            <div style={{ position:"absolute",top:"-30%",right:"-5%",width:300,height:300,borderRadius:"50%",background:"rgba(255,255,255,0.06)",pointerEvents:"none" }}/>
+            <div style={{ position:"relative",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:20 }}>
+              <div>
+                <p style={{ fontSize:14,opacity:0.85,marginBottom:6 }}>تحليلات الدعم الفني — {co?.name}</p>
+                <h1 style={{ fontSize:26,fontWeight:700,marginBottom:10,letterSpacing:-0.4 }}>
+                  {s.open||0} تذكرة مفتوحة
+                  {(s.overdue||0) > 0 && <span style={{ fontSize:14,marginRight:12,background:"rgba(255,255,255,0.2)",padding:"3px 10px",borderRadius:20 }}>⏰ {s.overdue} متأخرة</span>}
+                </h1>
+                <p style={{ fontSize:14.5,opacity:0.92,lineHeight:1.7,maxWidth:520 }}>
+                  إجمالي <strong>{s.total||0} تذكرة</strong> | مغلقة <strong>{s.closed||0}</strong> | متوسط الحل <strong>{s.avgResolutionHours||0} ساعة</strong>
+                </p>
+              </div>
+              {/* Progress ring */}
+              <div style={{ position:"relative",width:120,height:120,flexShrink:0 }}>
+                <svg viewBox="0 0 120 120" style={{ transform:"rotate(-90deg)",width:"100%",height:"100%" }}>
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="10"/>
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="white" strokeWidth="10" strokeLinecap="round"
+                    strokeDasharray={`${(slaPct/100)*314} 314`}/>
                 </svg>
-                <p style={{ fontSize:12,color:C.textSec,margin:"4px 0 0" }}>الهدف: 90%+</p>
-              </div>
-              {/* SLA stats */}
-              <div style={{ flex:1,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
-                {[
-                  {l:"إجمالي التذاكر",    v:slaTotal,   c:C.primary},
-                  {l:"SLA نجح",           v:slaPassed,  c:C.green},
-                  {l:"SLA فشل",           v:s.slaFailed,c:C.red},
-                  {l:"نسبة الفشل",        v:`${slaTotal>0?Math.round(s.slaFailed/slaTotal*100):0}%`, c:C.red},
-                ].map((st,i)=>(
-                  <div key={i} style={{ padding:"12px 14px",borderRadius:9,background:C.bg,border:`1px solid ${C.border}` }}>
-                    <p style={{ fontSize:10,color:C.muted,margin:"0 0 4px" }}>{st.l}</p>
-                    <p style={{ fontSize:18,fontWeight:900,color:st.c,margin:0 }}>{st.v}</p>
-                  </div>
-                ))}
+                <div style={{ position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff" }}>
+                  <span style={{ fontSize:28,fontWeight:700 }}>{slaPct}%</span>
+                  <span style={{ fontSize:11,opacity:0.85,marginTop:2 }}>SLA</span>
+                </div>
               </div>
             </div>
-          </Card>
+          </div>
 
-          {/* Overdue by team */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 14px" }}>⏰ المتأخرة حسب الفريق</p>
-            {Object.entries(overdueByTeam).length === 0
-              ? <p style={{ color:C.green,textAlign:"center",padding:16 }}>✅ لا توجد تذاكر متأخرة!</p>
-              : Object.entries(overdueByTeam).sort(([,a],[,b])=>b-a).map(([team,count],i)=>(
-                <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}` }}>
-                  <span style={{ fontSize:12,color:C.text }}>{team}</span>
-                  <div style={{ display:"flex",gap:8,alignItems:"center" }}>
-                    <div style={{ width:100,height:6,background:C.border,borderRadius:3,overflow:"hidden" }}>
-                      <div style={{ width:`${Math.round((count/s.overdue)*100)}%`,height:"100%",background:C.red,borderRadius:3 }}/>
-                    </div>
-                    <Badge label={`${count} متأخرة`} bg={C.redLight} color={C.red}/>
+          {/* KPI Row */}
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24 }}>
+            {[
+              {label:"إجمالي التذاكر", value:s.total||0, icon:"🎫", iconBg:OC.primarySoft, iconC:OC.primary, footer:`${s.open||0} مفتوحة الآن`},
+              {label:"مغلقة",          value:s.closed||0, icon:"✅", iconBg:OC.doneBg,     iconC:OC.done,    footer:`معدل ${s.total>0?Math.round((s.closed||0)/s.total*100):0}%`},
+              {label:"متأخرة",         value:s.overdue||0,icon:"⏰", iconBg:OC.urgentBg,   iconC:OC.urgent,  footer:"تجاوزت الموعد"},
+              {label:"SLA فشل",        value:s.slaFailed||0,icon:"❌",iconBg:OC.highBg,   iconC:OC.high,    footer:`${s.total>0?Math.round((s.slaFailed||0)/s.total*100):0}% من التذاكر`},
+            ].map((k,i)=>(
+              <div key={i} style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,padding:20,transition:"all 0.2s",cursor:"default" }}
+                onMouseEnter={e=>{(e.currentTarget as any).style.boxShadow="0 8px 24px rgba(0,0,0,0.08)";(e.currentTarget as any).style.borderColor=OC.primaryLight;(e.currentTarget as any).style.transform="translateY(-1px)";}}
+                onMouseLeave={e=>{(e.currentTarget as any).style.boxShadow="none";(e.currentTarget as any).style.borderColor=OC.border;(e.currentTarget as any).style.transform="none";}}>
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14 }}>
+                  <span style={{ fontSize:11,color:OC.textMuted,fontWeight:600,letterSpacing:0.3 }}>{k.label}</span>
+                  <div style={{ width:38,height:38,borderRadius:9,background:k.iconBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17 }}>{k.icon}</div>
+                </div>
+                <p style={{ fontSize:32,fontWeight:700,color:OC.text,margin:"0 0 8px",lineHeight:1 }}>{k.value}</p>
+                <p style={{ fontSize:12,color:OC.textMuted,paddingTop:10,borderTop:`1px dashed ${OC.border}`,margin:0 }}>{k.footer}</p>
+              </div>
+            ))}
+          </div>
+
+          {isLoading && <div style={{ textAlign:"center",padding:60,color:OC.textMuted }}>⏳ جاري تحميل بيانات Helpdesk...</div>}
+
+          {/* ── OVERVIEW ── */}
+          {activeNav==="overview" && !isLoading && (
+            <>
+              <div style={{ display:"grid",gridTemplateColumns:"1.5fr 1fr",gap:16,marginBottom:20 }}>
+                {/* By Stage */}
+                <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+                  <div style={{ padding:"16px 22px",borderBottom:`1px solid ${OC.border}`,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                    <span style={{ fontSize:15,fontWeight:700 }}>📊 التذاكر حسب الحالة</span>
+                    <span style={{ background:OC.primarySoft,color:OC.primary,padding:"2px 10px",borderRadius:12,fontSize:12,fontWeight:700 }}>{s.total}</span>
+                  </div>
+                  <div style={{ padding:"20px 22px" }}>
+                    {(data?.byStage||[]).slice(0,7).map((st:any,i:number)=>{
+                      const colors=["#714B67","#00A09D","#F0B429","#3B82C4","#D14545","#28a745","#9b6884"];
+                      return (
+                        <div key={i} style={{ marginBottom:14 }}>
+                          <div style={{ display:"flex",justifyContent:"space-between",marginBottom:5 }}>
+                            <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                              <div style={{ width:8,height:8,borderRadius:"50%",background:colors[i%colors.length] }}/>
+                              <span style={{ fontSize:13,color:OC.text,fontWeight:500 }}>{st.name}</span>
+                            </div>
+                            <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                              <span style={{ fontSize:11,color:OC.textMuted }}>{s.total>0?Math.round(st.count/s.total*100):0}%</span>
+                              <span style={{ fontSize:16,fontWeight:700,color:OC.text,minWidth:28,textAlign:"left" }}>{st.count}</span>
+                            </div>
+                          </div>
+                          <div style={{ background:"#F8F8F8",borderRadius:4,height:7,overflow:"hidden" }}>
+                            <div style={{ width:`${s.total>0?st.count/s.total*100:0}%`,height:"100%",background:colors[i%colors.length],borderRadius:4,transition:"width 0.6s ease" }}/>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              ))}
-          </Card>
 
-          {/* SLA by priority */}
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 14px" }}>🔴 SLA حسب الأولوية</p>
-            <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10 }}>
-              {["عاجل","عالي","عادي","منخفض"].map(p=>{
-                const pc = prioColor[p]||{c:C.muted,bg:C.bg};
-                const prioTix = tix.filter((t:any)=>t.priority===p);
-                const prioFail = prioTix.filter((t:any)=>t.slaFail).length;
-                const pct = prioTix.length>0?Math.round((prioTix.length-prioFail)/prioTix.length*100):100;
-                return (
-                  <div key={p} style={{ padding:"14px",borderRadius:10,background:pc.bg,textAlign:"center" }}>
-                    <p style={{ fontSize:11,color:pc.c,fontWeight:700,margin:"0 0 8px" }}>{p}</p>
-                    <p style={{ fontSize:24,fontWeight:900,color:pct>80?C.green:C.red,margin:"0 0 4px" }}>{pct}%</p>
-                    <p style={{ fontSize:10,color:C.muted,margin:0 }}>{prioTix.length} تذكرة</p>
+                {/* Priority breakdown */}
+                <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+                  <div style={{ padding:"16px 22px",borderBottom:`1px solid ${OC.border}` }}>
+                    <span style={{ fontSize:15,fontWeight:700 }}>🔴 الأولويات</span>
                   </div>
-                );
-              })}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* ════ TRENDS ════ */}
-      {tab==="trends" && (
-        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
-          <Card style={{ padding:"20px" }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📈 حجم التذاكر الشهري</p>
-            <div style={{ display:"flex",gap:6,alignItems:"flex-end",height:100,marginBottom:8 }}>
-              {monthEntries.map(([m,v],i)=>{
-                const total=v.open+v.closed;
-                return (
-                  <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
-                    <span style={{ fontSize:9,color:C.primary,fontWeight:700 }}>{total}</span>
-                    <div style={{ width:"100%",display:"flex",flexDirection:"column",gap:1 }}>
-                      <div style={{ width:"100%",background:C.amber,borderRadius:"2px 2px 0 0",height:`${maxMonth>0?(v.open/maxMonth)*80:4}px`,opacity:0.8 }}/>
-                      <div style={{ width:"100%",background:C.green,height:`${maxMonth>0?(v.closed/maxMonth)*80:4}px`,opacity:0.8 }}/>
-                    </div>
-                    <span style={{ fontSize:9,color:C.muted,writingMode:"vertical-rl",transform:"rotate(180deg)",height:40 }}>
-                      {arM[parseInt(m.split("-")[1])-1]?.slice(0,3)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:14 }}>
-            <Card style={{ padding:"20px" }}>
-              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 12px" }}>📊 معدل الإغلاق الشهري</p>
-              {monthEntries.map(([m,v],i)=>{
-                const total=v.open+v.closed;
-                const rate=total>0?Math.round(v.closed/total*100):0;
-                return (
-                  <div key={i} style={{ marginBottom:8 }}>
-                    <div style={{ display:"flex",justifyContent:"space-between",marginBottom:2 }}>
-                      <span style={{ fontSize:10,color:C.textSec }}>{arM[parseInt(m.split("-")[1])-1]}</span>
-                      <span style={{ fontSize:10,fontWeight:700,color:rate>70?C.green:rate>40?C.amber:C.red }}>{rate}%</span>
-                    </div>
-                    <div style={{ background:C.border,borderRadius:3,height:5,overflow:"hidden" }}>
-                      <div style={{ width:`${rate}%`,height:"100%",background:rate>70?C.green:rate>40?C.amber:C.red,borderRadius:3 }}/>
-                    </div>
-                  </div>
-                );
-              })}
-            </Card>
-
-            <Card style={{ padding:"20px" }}>
-              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 12px" }}>🔴 الأولويات العالية شهرياً</p>
-              {monthEntries.map(([m],i)=>{
-                const mTix = tix.filter((t:any)=>(t.created||"").startsWith(m));
-                const urgent = mTix.filter((t:any)=>t.priority==="عاجل"||t.priority==="عالي").length;
-                return (
-                  <div key={i} style={{ marginBottom:8 }}>
-                    <div style={{ display:"flex",justifyContent:"space-between",marginBottom:2 }}>
-                      <span style={{ fontSize:10,color:C.textSec }}>{arM[parseInt(m.split("-")[1])-1]}</span>
-                      <span style={{ fontSize:10,fontWeight:700,color:C.red }}>{urgent}</span>
-                    </div>
-                    <div style={{ background:C.border,borderRadius:3,height:5,overflow:"hidden" }}>
-                      <div style={{ width:`${mTix.length>0?(urgent/mTix.length)*100:0}%`,height:"100%",background:C.red,borderRadius:3 }}/>
-                    </div>
-                  </div>
-                );
-              })}
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {/* ════ AGENTS ════ */}
-      {tab==="agents" && (
-        <Card style={{ overflow:"hidden" }}>
-          <div style={{ padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:0 }}>👥 أداء الوكلاء (Agents)</p>
-          </div>
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
-              <thead>
-                <tr style={{ background:C.primaryLight }}>
-                  {["الوكيل","إجمالي","مفتوحة","مغلقة","معدل الإغلاق","متأخرة","متوسط وقت الحل","الأداء"].map(h=>(
-                    <th key={h} style={{ padding:"9px 12px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,whiteSpace:"nowrap",fontSize:10 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {agents.length === 0 ? (
-                  <tr><td colSpan={8} style={{ padding:20,textAlign:"center",color:C.muted }}>لا توجد بيانات وكلاء</td></tr>
-                ) : agents.map((a:any,i:number)=>(
-                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
-                    <td style={{ padding:"9px 12px",fontWeight:700,color:C.text }}>{a.name}</td>
-                    <td style={{ padding:"9px 12px",fontWeight:700,color:C.primary,textAlign:"center" }}>{a.total}</td>
-                    <td style={{ padding:"9px 12px",color:C.amber,textAlign:"center" }}>{a.open}</td>
-                    <td style={{ padding:"9px 12px",color:C.green,textAlign:"center" }}>{a.closed}</td>
-                    <td style={{ padding:"9px 12px",textAlign:"center" }}>
-                      <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-                        <div style={{ flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden" }}>
-                          <div style={{ width:`${a.closedRate}%`,height:"100%",background:a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red,borderRadius:3 }}/>
+                  <div style={{ padding:"20px 22px",display:"flex",flexDirection:"column",gap:12 }}>
+                    {(data?.byPriority||[]).map((p:any,i:number)=>{
+                      const ps=prioStyle[p.name]||{c:"#7C8B9A",bg:"#eef1f4"};
+                      return (
+                        <div key={i} style={{ display:"flex",alignItems:"center",gap:12 }}>
+                          <span style={{ padding:"4px 12px",borderRadius:12,fontSize:12,fontWeight:600,background:ps.bg,color:ps.c,minWidth:56,textAlign:"center" }}>{p.name}</span>
+                          <div style={{ flex:1,background:"#F8F8F8",borderRadius:4,height:8,overflow:"hidden" }}>
+                            <div style={{ width:`${s.total>0?p.count/s.total*100:0}%`,height:"100%",background:ps.c,borderRadius:4 }}/>
+                          </div>
+                          <span style={{ fontSize:16,fontWeight:700,color:OC.text,minWidth:28,textAlign:"left" }}>{p.count}</span>
                         </div>
-                        <span style={{ fontSize:10,fontWeight:700,color:a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red,minWidth:28 }}>{a.closedRate}%</span>
-                      </div>
-                    </td>
-                    <td style={{ padding:"9px 12px",textAlign:"center" }}>
-                      {a.overdue > 0 ? <Badge label={String(a.overdue)} bg={C.redLight} color={C.red}/> : <span style={{ color:C.muted }}>0</span>}
-                    </td>
-                    <td style={{ padding:"9px 12px",textAlign:"center",color:C.teal }}>
-                      {a.avgHours > 0 ? `${a.avgHours}س` : "—"}
-                    </td>
-                    <td style={{ padding:"9px 12px" }}>
-                      <Badge label={a.closedRate>70?"ممتاز":a.closedRate>40?"جيد":"يحتاج تحسين"}
-                        bg={a.closedRate>70?C.greenLight:a.closedRate>40?C.amberLight:C.redLight}
-                        color={a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red}/>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                      );
+                    })}
+                  </div>
 
-      {/* ════ CUSTOMERS ════ */}
-      {tab==="customers" && (
-        <Card style={{ overflow:"hidden" }}>
-          <div style={{ padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
-            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:0 }}>🏢 تحليل العملاء</p>
-          </div>
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
-              <thead>
-                <tr style={{ background:C.primaryLight }}>
-                  {["#","العميل","إجمالي","مفتوحة","مغلقة","عاجلة","معدل الإغلاق","المستوى"].map(h=>(
-                    <th key={h} style={{ padding:"9px 12px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,fontSize:10 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {customers.length===0 ? (
-                  <tr><td colSpan={8} style={{ padding:20,textAlign:"center",color:C.muted }}>لا توجد بيانات عملاء</td></tr>
-                ) : customers.map((c:any,i:number)=>(
-                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
-                    <td style={{ padding:"8px 12px",color:C.muted }}>{i+1}</td>
-                    <td style={{ padding:"8px 12px",fontWeight:700,color:C.text }}>{c.name}</td>
-                    <td style={{ padding:"8px 12px",fontWeight:800,color:C.primary,textAlign:"center" }}>{c.total}</td>
-                    <td style={{ padding:"8px 12px",color:C.amber,textAlign:"center" }}>{c.open}</td>
-                    <td style={{ padding:"8px 12px",color:C.green,textAlign:"center" }}>{c.closed}</td>
-                    <td style={{ padding:"8px 12px",textAlign:"center" }}>
-                      {c.urgentCount>0 ? <Badge label={String(c.urgentCount)} bg={C.redLight} color={C.red}/> : <span style={{ color:C.muted }}>0</span>}
-                    </td>
-                    <td style={{ padding:"8px 12px" }}>
-                      <div style={{ display:"flex",alignItems:"center",gap:4 }}>
-                        <div style={{ width:60,height:5,background:C.border,borderRadius:3,overflow:"hidden" }}>
-                          <div style={{ width:`${c.satisfaction}%`,height:"100%",background:c.satisfaction>70?C.green:C.amber,borderRadius:3 }}/>
+                  {/* Top customers quick */}
+                  <div style={{ padding:"16px 22px",borderTop:`1px solid ${OC.border}` }}>
+                    <p style={{ fontSize:12,fontWeight:700,color:OC.textMuted,marginBottom:10,letterSpacing:0.5 }}>أكثر العملاء تذاكراً</p>
+                    {(data?.topPartners||[]).slice(0,4).map((p:any,i:number)=>(
+                      <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
+                        <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                          <div style={{ width:26,height:26,borderRadius:"50%",background:`${OC.primary}20`,color:OC.primary,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700 }}>{p.name.charAt(0)}</div>
+                          <span style={{ fontSize:12,color:OC.text }}>{p.name.slice(0,20)}</span>
                         </div>
-                        <span style={{ fontSize:10,color:c.satisfaction>70?C.green:C.amber }}>{c.satisfaction}%</span>
+                        <span style={{ background:OC.primarySoft,color:OC.primary,padding:"2px 9px",borderRadius:10,fontSize:11,fontWeight:700 }}>{p.count}</span>
                       </div>
-                    </td>
-                    <td style={{ padding:"8px 12px" }}>
-                      <Badge label={c.total>20?"VIP":c.total>10?"متكرر":"عادي"}
-                        bg={c.total>20?C.amberLight:c.total>10?C.primaryLight:C.bg}
-                        color={c.total>20?C.amber:c.total>10?C.primary:C.muted}/>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {/* ════ TICKETS ════ */}
-      {tab==="tickets" && (
-        <>
-          <Card style={{ padding:"12px 16px",marginBottom:12 }}>
-            <div style={{ display:"flex",gap:8,flexWrap:"wrap",alignItems:"center" }}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 بحث في التذاكر..."
-                style={{ flex:2,minWidth:140,padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:12,outline:"none" }}/>
-              <select value={filterStage} onChange={e=>setStage(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
-                <option value="all">كل الحالات</option>
-                {(data.stages||[]).map((st:any)=><option key={st.id} value={st.name}>{st.name}</option>)}
-              </select>
-              <select value={filterPrio} onChange={e=>setPrio(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
-                <option value="all">كل الأولويات</option>
-                {["عاجل","عالي","عادي","منخفض"].map(p=><option key={p} value={p}>{p}</option>)}
-              </select>
-              <select value={filterTeam} onChange={e=>setTeam(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
-                <option value="all">كل الفرق</option>
-                {(data.teams||[]).map((tm:any)=><option key={tm.id} value={tm.name}>{tm.name}</option>)}
-              </select>
-              <Badge label={`${filtered.length} نتيجة`} bg={C.primaryLight} color={C.primary}/>
-            </div>
-          </Card>
-
-          <Card style={{ overflow:"hidden" }}>
-            <div style={{ overflowX:"auto" }}>
-              <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
-                <thead>
-                  <tr style={{ background:C.primaryLight }}>
-                    {["#","الموضوع","العميل","الفريق","الحالة","الأولوية","المسؤول","الإنشاء","الموعد","الحالة"].map(h=>(
-                      <th key={h} style={{ padding:"9px 10px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,whiteSpace:"nowrap",fontSize:10 }}>{h}</th>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length===0 ? (
-                    <tr><td colSpan={10} style={{ padding:24,textAlign:"center",color:C.muted }}>لا توجد تذاكر مطابقة</td></tr>
-                  ) : filtered.map((t:any,i:number)=>{
-                    const pc=prioColor[t.priority]||{c:C.muted,bg:C.bg};
-                    return (
-                      <tr key={i} onClick={()=>setTicket(selTicket?.id===t.id?null:t)}
-                        style={{ borderBottom:`1px solid ${C.border}`,background:t.isOverdue?"#FFF5F5":i%2===0?"#fff":"#F8FAFF",cursor:"pointer" }}
-                        onMouseEnter={e=>(e.currentTarget as any).style.background=C.primaryLight}
-                        onMouseLeave={e=>(e.currentTarget as any).style.background=t.isOverdue?"#FFF5F5":i%2===0?"#fff":"#F8FAFF"}>
-                        <td style={{ padding:"7px 10px",color:C.muted,fontFamily:"monospace",fontSize:10 }}>#{t.id}</td>
-                        <td style={{ padding:"7px 10px",color:C.text,fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
-                          {t.slaFail && <span title="SLA فشل" style={{ marginLeft:4 }}>⚠️</span>}
-                          {t.isOverdue && <span title="متأخرة" style={{ marginLeft:4 }}>⏰</span>}
-                          {t.name}
-                        </td>
-                        <td style={{ padding:"7px 10px",color:C.textSec,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{t.partner}</td>
-                        <td style={{ padding:"7px 10px",color:C.textSec,fontSize:10 }}>{t.team}</td>
-                        <td style={{ padding:"7px 10px" }}><Badge label={t.stage} bg={C.bg} color={C.textSec}/></td>
-                        <td style={{ padding:"7px 10px" }}><Badge label={t.priority} bg={pc.bg} color={pc.c}/></td>
-                        <td style={{ padding:"7px 10px",color:C.textSec,fontSize:10 }}>{t.assignee||"—"}</td>
-                        <td style={{ padding:"7px 10px",color:C.muted,fontFamily:"monospace",fontSize:10 }}>{t.created}</td>
-                        <td style={{ padding:"7px 10px",color:t.isOverdue?C.red:C.muted,fontFamily:"monospace",fontSize:10 }}>{t.deadline||"—"}</td>
-                        <td style={{ padding:"7px 10px" }}>
-                          {t.closed ? <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>
-                                    : <Badge label="🔓 مفتوحة" bg={C.amberLight} color={C.amber}/>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          {/* Detail Modal */}
-          {selTicket && (
-            <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,direction:"rtl" }}
-              onClick={()=>setTicket(null)}>
-              <div onClick={e=>e.stopPropagation()} style={{ background:C.surface,borderRadius:16,padding:24,maxWidth:520,width:"94%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)",maxHeight:"80vh",overflowY:"auto" }}>
-                <div style={{ display:"flex",justifyContent:"space-between",marginBottom:16 }}>
-                  <div>
-                    <p style={{ fontSize:16,fontWeight:900,color:C.text,margin:"0 0 8px" }}>🎫 {selTicket.name}</p>
-                    <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
-                      <Badge label={`#${selTicket.id}`} bg={C.bg} color={C.muted}/>
-                      <Badge label={selTicket.priority} bg={(prioColor[selTicket.priority]||{bg:C.bg}).bg} color={(prioColor[selTicket.priority]||{c:C.muted}).c}/>
-                      <Badge label={selTicket.stage} bg={C.primaryLight} color={C.primary}/>
-                      {selTicket.closed && <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>}
-                      {selTicket.isOverdue && <Badge label="⏰ متأخرة" bg={C.redLight} color={C.red}/>}
-                      {selTicket.slaFail && <Badge label="⚠️ SLA فشل" bg={C.amberLight} color={C.amber}/>}
-                    </div>
                   </div>
-                  <button onClick={()=>setTicket(null)} style={{ background:"transparent",border:"none",fontSize:22,cursor:"pointer",color:C.muted }}>×</button>
                 </div>
-                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
-                  {[
-                    {l:"العميل",         v:selTicket.partner   ||"—"},
-                    {l:"المسؤول",        v:selTicket.assignee  ||"—"},
-                    {l:"الفريق",         v:selTicket.team      ||"—"},
-                    {l:"النوع",          v:selTicket.type      ||"—"},
-                    {l:"تاريخ الإنشاء", v:selTicket.created   ||"—"},
-                    {l:"الموعد النهائي", v:selTicket.deadline  ||"—"},
-                    {l:"تاريخ الإغلاق", v:selTicket.closed    ||"مفتوحة"},
-                    {l:"SLA",            v:selTicket.slaFail?"❌ فشل":"✅ نجح"},
-                  ].map((s,i)=>(
-                    <div key={i} style={{ padding:"10px 12px",borderRadius:8,background:C.bg }}>
-                      <p style={{ fontSize:10,color:C.muted,margin:"0 0 3px" }}>{s.l}</p>
-                      <p style={{ fontSize:12,fontWeight:600,color:C.text,margin:0 }}>{s.v}</p>
-                    </div>
+              </div>
+
+              {/* Quick tickets table */}
+              <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+                <div style={{ padding:"16px 22px",borderBottom:`1px solid ${OC.border}`,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <span style={{ fontSize:15,fontWeight:700 }}>🎫 آخر التذاكر</span>
+                  <button onClick={()=>setNav("tickets")} style={{ fontSize:12,color:OC.primary,background:OC.primarySoft,border:"none",padding:"5px 14px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontWeight:600 }}>عرض الكل</button>
+                </div>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
+                    <thead>
+                      <tr style={{ background:"#FBFAFC" }}>
+                        {["#","الموضوع","العميل","الفريق","الحالة","الأولوية","المسؤول","الموعد"].map(h=>(
+                          <th key={h} style={{ padding:"12px 16px",textAlign:"right",fontWeight:700,color:OC.textSoft,fontSize:11.5,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${OC.border}`,whiteSpace:"nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tix.slice(0,8).map((t:any,i:number)=>{
+                        const ps=prioStyle[t.priority]||{c:"#7C8B9A",bg:"#eef1f4"};
+                        return (
+                          <tr key={i} style={{ borderBottom:`1px solid ${OC.border}`,cursor:"pointer",transition:"background 0.1s" }}
+                            onMouseEnter={e=>(e.currentTarget as any).style.background=OC.primarySoft}
+                            onMouseLeave={e=>(e.currentTarget as any).style.background="transparent"}
+                            onClick={()=>setTicket(t)}>
+                            <td style={{ padding:"14px 16px",color:OC.primary,fontWeight:700,fontFamily:"Cairo,monospace",fontSize:12.5 }}>#{t.id}</td>
+                            <td style={{ padding:"14px 16px",maxWidth:280 }}>
+                              <div style={{ fontWeight:600,color:OC.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+                                {t.slaFail&&<span title="SLA فشل" style={{ marginLeft:4 }}>⚠️</span>}
+                                {t.isOverdue&&<span title="متأخرة" style={{ marginLeft:4 }}>⏰</span>}
+                                {t.name}
+                              </div>
+                            </td>
+                            <td style={{ padding:"14px 16px",color:OC.textSoft,fontSize:12.5 }}>{t.partner||"—"}</td>
+                            <td style={{ padding:"14px 16px",color:OC.textSoft,fontSize:12.5 }}>{t.team||"—"}</td>
+                            <td style={{ padding:"14px 16px" }}>
+                              <span style={{ padding:"3px 9px",borderRadius:12,fontSize:11,fontWeight:600,background:t.closed?OC.doneBg:OC.progressBg,color:t.closed?OC.done:"#b48714" }}>
+                                {t.closed?"✅ مغلقة":"🔓 مفتوحة"}
+                              </span>
+                            </td>
+                            <td style={{ padding:"14px 16px" }}>
+                              <span style={{ padding:"3px 9px",borderRadius:12,fontSize:11,fontWeight:600,background:ps.bg,color:ps.c }}>{t.priority}</span>
+                            </td>
+                            <td style={{ padding:"14px 16px",color:OC.textSoft,fontSize:12.5 }}>{t.assignee||"—"}</td>
+                            <td style={{ padding:"14px 16px",color:t.isOverdue?OC.urgent:OC.textMuted,fontSize:12,fontFamily:"Cairo,monospace" }}>{t.deadline||"—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── ALL TICKETS ── */}
+          {(activeNav==="tickets"||activeNav==="overdue"||activeNav==="sla") && !isLoading && (
+            <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+              <div style={{ padding:"14px 22px",background:"#FBFAFC",borderBottom:`1px solid ${OC.border}`,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center" }}>
+                <div style={{ display:"flex",background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:7,padding:3 }}>
+                  {[{k:"all",l:"الكل"},{k:"open",l:"مفتوحة"},{k:"closed",l:"مغلقة"},{k:"overdue",l:"متأخرة"},{k:"sla",l:"SLA فشل"}].map(s=>(
+                    <button key={s.k} onClick={()=>setStatus(s.k)}
+                      style={{ background:filterStatus===s.k?OC.primary:"transparent",color:filterStatus===s.k?"#fff":OC.textSoft,border:"none",padding:"6px 14px",borderRadius:5,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s",boxShadow:filterStatus===s.k?`0 2px 6px ${OC.primary}30`:"none" }}>
+                      {s.l}
+                    </button>
                   ))}
                 </div>
+                <div style={{ flex:1,position:"relative" }}>
+                  <input placeholder="🔍 بحث..." value={search} onChange={e=>setSearch(e.target.value)}
+                    style={{ width:"100%",height:36,border:`1px solid ${OC.border}`,borderRadius:7,padding:"0 36px 0 12px",fontSize:13,fontFamily:"inherit",background:OC.surface,outline:"none" }}/>
+                </div>
+                <span style={{ fontSize:13,color:OC.textMuted }}>{filtered.length} تذكرة</span>
+              </div>
+              <div style={{ overflowX:"auto",maxHeight:520 }}>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
+                  <thead style={{ position:"sticky",top:0,background:"#FBFAFC",zIndex:5 }}>
+                    <tr>
+                      {["#","الموضوع","العميل","الفريق","الحالة","الأولوية","المسؤول","الإنشاء","الموعد"].map(h=>(
+                        <th key={h} style={{ padding:"12px 14px",textAlign:"right",fontWeight:700,color:OC.textSoft,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${OC.border}`,whiteSpace:"nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length===0 ? (
+                      <tr><td colSpan={9} style={{ textAlign:"center",padding:"60px 20px",color:OC.textMuted }}>
+                        <div style={{ fontSize:36,marginBottom:8 }}>🎉</div>
+                        <p style={{ fontWeight:600 }}>لا توجد تذاكر في هذا التصنيف</p>
+                      </td></tr>
+                    ) : filtered.map((t:any,i:number)=>{
+                      const ps=prioStyle[t.priority]||{c:"#7C8B9A",bg:"#eef1f4"};
+                      return (
+                        <tr key={i} style={{ borderBottom:`1px solid ${OC.border}`,cursor:"pointer",borderRight:`3px solid ${ps.c}`,transition:"background 0.1s" }}
+                          onMouseEnter={e=>(e.currentTarget as any).style.background=OC.primarySoft}
+                          onMouseLeave={e=>(e.currentTarget as any).style.background="transparent"}
+                          onClick={()=>setTicket(t)}>
+                          <td style={{ padding:"13px 14px",color:OC.primary,fontWeight:700,fontFamily:"Cairo,monospace",fontSize:12 }}>#{t.id}</td>
+                          <td style={{ padding:"13px 14px",maxWidth:240 }}>
+                            <div style={{ fontWeight:600,color:OC.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+                              {t.slaFail&&<span style={{ marginLeft:3 }}>⚠️</span>}
+                              {t.isOverdue&&<span style={{ marginLeft:3 }}>⏰</span>}
+                              {t.name}
+                            </div>
+                          </td>
+                          <td style={{ padding:"13px 14px",color:OC.textSoft,fontSize:12 }}>{t.partner||"—"}</td>
+                          <td style={{ padding:"13px 14px",color:OC.textSoft,fontSize:12 }}>{t.team||"—"}</td>
+                          <td style={{ padding:"13px 14px" }}>
+                            <span style={{ padding:"3px 9px",borderRadius:12,fontSize:11,fontWeight:600,background:t.closed?OC.doneBg:OC.progressBg,color:t.closed?OC.done:"#b48714" }}>
+                              {t.closed?"✅ مغلقة":"🔓 مفتوحة"}
+                            </span>
+                          </td>
+                          <td style={{ padding:"13px 14px" }}>
+                            <span style={{ padding:"3px 9px",borderRadius:12,fontSize:11,fontWeight:600,background:ps.bg,color:ps.c }}>{t.priority}</span>
+                          </td>
+                          <td style={{ padding:"13px 14px",color:OC.textSoft,fontSize:12 }}>{t.assignee||"—"}</td>
+                          <td style={{ padding:"13px 14px",color:OC.textMuted,fontFamily:"Cairo,monospace",fontSize:11 }}>{t.created}</td>
+                          <td style={{ padding:"13px 14px",color:t.isOverdue?OC.urgent:OC.textMuted,fontFamily:"Cairo,monospace",fontSize:11 }}>{t.deadline||"—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
-        </>
+
+          {/* ── AGENTS ── */}
+          {activeNav==="agents" && !isLoading && (
+            <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+              <div style={{ padding:"16px 22px",borderBottom:`1px solid ${OC.border}` }}>
+                <span style={{ fontSize:15,fontWeight:700 }}>👥 أداء الوكلاء</span>
+              </div>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
+                  <thead><tr style={{ background:"#FBFAFC" }}>
+                    {["الوكيل","إجمالي","مفتوحة","مغلقة","معدل الإغلاق","متأخرة","متوسط وقت الحل","التقييم"].map(h=>(
+                      <th key={h} style={{ padding:"12px 16px",textAlign:"right",fontWeight:700,color:OC.textSoft,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${OC.border}`,whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {agents.map((a:any,i:number)=>(
+                      <tr key={i} style={{ borderBottom:`1px solid ${OC.border}`,transition:"background 0.1s" }}
+                        onMouseEnter={e=>(e.currentTarget as any).style.background=OC.primarySoft}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background="transparent"}>
+                        <td style={{ padding:"14px 16px" }}>
+                          <div style={{ display:"flex",gap:10,alignItems:"center" }}>
+                            <div style={{ width:32,height:32,borderRadius:"50%",background:`${OC.primary}20`,color:OC.primary,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13 }}>{a.name.charAt(0)}</div>
+                            <span style={{ fontWeight:600 }}>{a.name}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding:"14px 16px",fontWeight:700,color:OC.primary,textAlign:"center" }}>{a.total}</td>
+                        <td style={{ padding:"14px 16px",color:"#b48714",textAlign:"center" }}>{a.open}</td>
+                        <td style={{ padding:"14px 16px",color:OC.done,textAlign:"center" }}>{a.closed}</td>
+                        <td style={{ padding:"14px 16px",minWidth:120 }}>
+                          <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                            <div style={{ flex:1,height:6,background:"#F0F0F0",borderRadius:3,overflow:"hidden" }}>
+                              <div style={{ width:`${a.rate}%`,height:"100%",background:a.rate>70?OC.done:a.rate>40?"#F0B429":OC.urgent,borderRadius:3 }}/>
+                            </div>
+                            <span style={{ fontSize:12,fontWeight:700,color:a.rate>70?OC.done:a.rate>40?"#b48714":OC.urgent,minWidth:30 }}>{a.rate}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding:"14px 16px",textAlign:"center" }}>
+                          {a.overdue>0 ? <span style={{ background:OC.urgentBg,color:OC.urgent,padding:"2px 9px",borderRadius:10,fontSize:11,fontWeight:700 }}>{a.overdue}</span> : <span style={{ color:OC.textMuted }}>0</span>}
+                        </td>
+                        <td style={{ padding:"14px 16px",color:OC.accent,textAlign:"center" }}>{a.avg>0?`${a.avg}س`:"—"}</td>
+                        <td style={{ padding:"14px 16px" }}>
+                          <span style={{ padding:"4px 12px",borderRadius:12,fontSize:11,fontWeight:600,background:a.rate>70?OC.doneBg:a.rate>40?OC.progressBg:OC.urgentBg,color:a.rate>70?OC.done:a.rate>40?"#b48714":OC.urgent }}>
+                            {a.rate>70?"ممتاز":a.rate>40?"جيد":"يحتاج تحسين"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── CUSTOMERS ── */}
+          {activeNav==="customers" && !isLoading && (
+            <div style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,overflow:"hidden" }}>
+              <div style={{ padding:"16px 22px",borderBottom:`1px solid ${OC.border}` }}>
+                <span style={{ fontSize:15,fontWeight:700 }}>🏢 تحليل العملاء</span>
+              </div>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
+                  <thead><tr style={{ background:"#FBFAFC" }}>
+                    {["#","العميل","إجمالي","مفتوحة","عاجلة","المستوى"].map(h=>(
+                      <th key={h} style={{ padding:"12px 16px",textAlign:"right",fontWeight:700,color:OC.textSoft,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${OC.border}` }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {customers.slice(0,30).map((c:any,i:number)=>(
+                      <tr key={i} style={{ borderBottom:`1px solid ${OC.border}` }}
+                        onMouseEnter={e=>(e.currentTarget as any).style.background=OC.primarySoft}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background="transparent"}>
+                        <td style={{ padding:"12px 16px",color:OC.textMuted }}>{i+1}</td>
+                        <td style={{ padding:"12px 16px" }}>
+                          <div style={{ display:"flex",gap:10,alignItems:"center" }}>
+                            <div style={{ width:30,height:30,borderRadius:"50%",background:`${OC.primary}15`,color:OC.primary,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12 }}>{c.name.charAt(0)}</div>
+                            <span style={{ fontWeight:600 }}>{c.name}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding:"12px 16px",fontWeight:700,color:OC.primary,textAlign:"center" }}>{c.total}</td>
+                        <td style={{ padding:"12px 16px",textAlign:"center" }}>
+                          {c.open>0?<span style={{ background:OC.progressBg,color:"#b48714",padding:"2px 9px",borderRadius:10,fontSize:11,fontWeight:700 }}>{c.open}</span>:<span style={{ color:OC.textMuted }}>0</span>}
+                        </td>
+                        <td style={{ padding:"12px 16px",textAlign:"center" }}>
+                          {c.urgent>0?<span style={{ background:OC.urgentBg,color:OC.urgent,padding:"2px 9px",borderRadius:10,fontSize:11,fontWeight:700 }}>{c.urgent}</span>:<span style={{ color:OC.textMuted }}>0</span>}
+                        </td>
+                        <td style={{ padding:"12px 16px" }}>
+                          <span style={{ padding:"4px 12px",borderRadius:12,fontSize:11,fontWeight:600,background:c.total>20?"#FDF3D8":c.total>10?"#EEF6FF":"#F0F0F0",color:c.total>20?"#b48714":c.total>10?OC.primary:"#909090" }}>
+                            {c.total>20?"VIP":c.total>10?"متكرر":"عادي"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Help footer */}
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginTop:24 }}>
+            {[
+              {icon:"📞",bg:OC.primarySoft,c:OC.primary,title:"تواصل مع الدعم",desc:"اتصل بفريق الدعم الفني مباشرة"},
+              {icon:"📊",bg:OC.accentSoft,c:OC.accent,title:"تقرير الأداء",desc:"حمّل تقرير الأداء الشهري كامل"},
+              {icon:"⚙️",bg:OC.progressBg,c:"#b48714",title:"إعدادات SLA",desc:"عدّل أهداف وإعدادات الـ SLA"},
+            ].map((h,i)=>(
+              <div key={i} style={{ background:OC.surface,border:`1px solid ${OC.border}`,borderRadius:10,padding:"20px 22px",display:"flex",alignItems:"center",gap:16,cursor:"pointer",transition:"all 0.2s" }}
+                onMouseEnter={e=>{(e.currentTarget as any).style.borderColor=OC.primary;(e.currentTarget as any).style.transform="translateY(-2px)";(e.currentTarget as any).style.boxShadow="0 4px 14px rgba(0,0,0,0.06)";}}
+                onMouseLeave={e=>{(e.currentTarget as any).style.borderColor=OC.border;(e.currentTarget as any).style.transform="none";(e.currentTarget as any).style.boxShadow="none";}}>
+                <div style={{ width:44,height:44,borderRadius:10,background:h.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0 }}>{h.icon}</div>
+                <div>
+                  <p style={{ fontSize:14,color:OC.text,fontWeight:700,margin:"0 0 3px" }}>{h.title}</p>
+                  <p style={{ fontSize:12.5,color:OC.textMuted,margin:0 }}>{h.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </main>
+      </div>
+
+      {/* Ticket Detail Modal */}
+      {selTicket && (
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,direction:"rtl",fontFamily:"Cairo,sans-serif" }}
+          onClick={()=>setTicket(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:OC.surface,borderRadius:14,padding:28,maxWidth:520,width:"94%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",border:`1px solid ${OC.border}` }}>
+            {(()=>{const ps=prioStyle[selTicket.priority]||{c:"#7C8B9A",bg:"#eef1f4"};return(
+              <>
+                <div style={{ display:"flex",justifyContent:"space-between",marginBottom:20 }}>
+                  <div>
+                    <p style={{ fontSize:12,color:OC.primary,fontWeight:700,margin:"0 0 6px",fontFamily:"Cairo,monospace" }}>#{selTicket.id}</p>
+                    <h3 style={{ fontSize:17,fontWeight:700,color:OC.text,margin:"0 0 10px",lineHeight:1.4 }}>{selTicket.name}</h3>
+                    <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
+                      <span style={{ padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:600,background:ps.bg,color:ps.c }}>{selTicket.priority}</span>
+                      <span style={{ padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:600,background:selTicket.closed?OC.doneBg:OC.progressBg,color:selTicket.closed?OC.done:"#b48714" }}>{selTicket.closed?"✅ مغلقة":"🔓 مفتوحة"}</span>
+                      {selTicket.slaFail&&<span style={{ padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:600,background:OC.highBg,color:OC.high }}>⚠️ SLA فشل</span>}
+                      {selTicket.isOverdue&&<span style={{ padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:600,background:OC.urgentBg,color:OC.urgent }}>⏰ متأخرة</span>}
+                    </div>
+                  </div>
+                  <button onClick={()=>setTicket(null)} style={{ background:"transparent",border:"none",fontSize:24,cursor:"pointer",color:OC.textMuted,lineHeight:1 }}>×</button>
+                </div>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
+                  {[{l:"العميل",v:selTicket.partner||"—"},{l:"المسؤول",v:selTicket.assignee||"—"},{l:"الفريق",v:selTicket.team||"—"},{l:"النوع",v:selTicket.type||"—"},{l:"تاريخ الإنشاء",v:selTicket.created||"—"},{l:"الموعد النهائي",v:selTicket.deadline||"—"},{l:"تاريخ الإغلاق",v:selTicket.closed||"مفتوحة"},{l:"الحالة",v:selTicket.stage||"—"}].map((s,i)=>(
+                    <div key={i} style={{ padding:"10px 12px",borderRadius:8,background:OC.bg,border:`1px solid ${OC.border}` }}>
+                      <p style={{ fontSize:10,color:OC.textMuted,margin:"0 0 3px",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5 }}>{s.l}</p>
+                      <p style={{ fontSize:13,fontWeight:600,color:OC.text,margin:0 }}>{s.v}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );})()}
+          </div>
+        </div>
       )}
-      </>}
     </div>
   );
 }
@@ -3308,8 +3328,20 @@ function HelpdeskPage({ companyId, co }:any) {
 
 
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
+  const [portalMode, setPortalMode] = useState<string|null>(null);
   const [page, setPage]      = useState("dashboard");
   const [open, setOpen]      = useState(true);
+
+  // Show landing on first load
+  if (portalMode === null) {
+    return <PortalLanding user={user} onChoose={(mode)=>setPortalMode(mode)} />;
+  }
+
+  // Helpdesk Portal Mode — full separate UI
+  if (portalMode === "helpdesk") {
+    return <HelpdeskPortalWrapper user={user} onSwitch={()=>setPortalMode(null)} />;
+  }
+
   const [showSearch, setShowSearch] = useState(false);
   const [isDark, setDark]    = useState(()=>localStorage.getItem("cfo_theme")==="dark");
   if (isDark) C = THEMES.dark; else C = THEMES.light;
