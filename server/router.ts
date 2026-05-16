@@ -1065,6 +1065,130 @@ const journalRouter = router({
       return { success:true, entries:entryCount, lines:lineCount };
     }),
 
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🎫 نظام الدعم الفني (Helpdesk)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // جلب بيانات Helpdesk من Odoo
+  getHelpdeskData: protectedProcedure
+    .input(z.object({
+      companyId: z.number(),
+      dateFrom:  z.string().optional(),
+      dateTo:    z.string().optional(),
+      limit:     z.number().optional(),
+    }))
+    .query(async ({ input }) => {
+      // جلب إعدادات Odoo
+      const cfg = await db.run(sql`SELECT * FROM odoo_configs WHERE company_id=${input.companyId} LIMIT 1`);
+      const row = (cfg as any).rows?.[0];
+      if (!row) throw new TRPCError({ code:"NOT_FOUND", message:"لا توجد إعدادات Odoo لهذه الشركة" });
+
+      const { fetchHelpdeskData } = await import("./odoo.js");
+      const data = await fetchHelpdeskData(
+        row.url, row.database, row.username, row.password,
+        row.odoo_company_id,
+        { dateFrom: input.dateFrom, dateTo: input.dateTo, limit: input.limit }
+      );
+
+      // تحليل البيانات
+      const tickets: any[] = data.tickets;
+      const stages:  any[] = data.stages;
+      const teams:   any[] = data.teams;
+      const types:   any[] = data.types;
+
+      // إحصاءات عامة
+      const total       = tickets.length;
+      const open        = tickets.filter((t:any) => !t.close_date).length;
+      const closed      = tickets.filter((t:any) =>  t.close_date).length;
+      const slaFailed   = tickets.filter((t:any) =>  t.sla_fail).length;
+      const highPriority = tickets.filter((t:any) => t.priority === "3").length;
+
+      // حسب الحالة
+      const byStage: Record<string,number> = {};
+      for (const t of tickets) {
+        const s = t.stage_id?.[1] || "غير محدد";
+        byStage[s] = (byStage[s]||0) + 1;
+      }
+
+      // حسب الفريق
+      const byTeam: Record<string,number> = {};
+      for (const t of tickets) {
+        const tm = t.team_id?.[1] || "غير محدد";
+        byTeam[tm] = (byTeam[tm]||0) + 1;
+      }
+
+      // حسب النوع
+      const byType: Record<string,number> = {};
+      for (const t of tickets) {
+        const tp = t.ticket_type_id?.[1] || "غير محدد";
+        byType[tp] = (byType[tp]||0) + 1;
+      }
+
+      // حسب الأولوية
+      const priorityMap: Record<string,string> = {"0":"عادي","1":"منخفض","2":"عالي","3":"عاجل"};
+      const byPriority: Record<string,number> = {};
+      for (const t of tickets) {
+        const p = priorityMap[t.priority||"0"] || "عادي";
+        byPriority[p] = (byPriority[p]||0) + 1;
+      }
+
+      // متوسط وقت الحل (بالساعات)
+      let avgResolutionHours = 0;
+      const resolved = tickets.filter((t:any) => t.close_date && t.create_date);
+      if (resolved.length > 0) {
+        const totalHours = resolved.reduce((s:number, t:any) => {
+          const created = new Date(t.create_date).getTime();
+          const closed  = new Date(t.close_date).getTime();
+          return s + (closed - created) / 3600000;
+        }, 0);
+        avgResolutionHours = Math.round(totalHours / resolved.length);
+      }
+
+      // أكثر العملاء إرسالاً للتذاكر
+      const byPartner: Record<string,number> = {};
+      for (const t of tickets) {
+        const p = t.partner_name || "غير معروف";
+        byPartner[p] = (byPartner[p]||0) + 1;
+      }
+      const topPartners = Object.entries(byPartner)
+        .sort(([,a],[,b]) => b-a).slice(0,10)
+        .map(([name,count]) => ({ name, count }));
+
+      // تذاكر متأخرة (deadline مضى)
+      const now = new Date();
+      const overdue = tickets.filter((t:any) =>
+        t.date_deadline && !t.close_date && new Date(t.date_deadline) < now
+      ).length;
+
+      return {
+        summary: { total, open, closed, slaFailed, highPriority, overdue, avgResolutionHours },
+        byStage:    Object.entries(byStage).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count),
+        byTeam:     Object.entries(byTeam).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count),
+        byType:     Object.entries(byType).map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count),
+        byPriority: Object.entries(byPriority).map(([name,count])=>({name,count})),
+        topPartners,
+        tickets: tickets.slice(0,100).map((t:any) => ({
+          id:       t.id,
+          name:     t.name,
+          team:     t.team_id?.[1]  || "",
+          type:     t.ticket_type_id?.[1] || "",
+          stage:    t.stage_id?.[1] || "",
+          priority: priorityMap[t.priority||"0"],
+          partner:  t.partner_name  || "",
+          assignee: t.user_id?.[1]  || "",
+          created:  t.create_date?.split(" ")[0] || "",
+          deadline: t.date_deadline?.split(" ")[0] || "",
+          closed:   t.close_date?.split(" ")[0]   || "",
+          slaFail:  t.sla_fail,
+          isOverdue: !!(t.date_deadline && !t.close_date && new Date(t.date_deadline) < new Date()),
+        })),
+        teams:  teams.map((t:any) => ({ id:t.id, name:t.name })),
+        stages: stages.map((s:any) => ({ id:s.id, name:s.name, sequence:s.sequence })),
+        types:  types.map((tp:any) => ({ id:tp.id, name:tp.name })),
+      };
+    }),
+
   // ══ تقرير المبيعات اليومية حسب مراكز التكلفة ════════════════════════════
   dailySalesReport: protectedProcedure
     .input(z.object({

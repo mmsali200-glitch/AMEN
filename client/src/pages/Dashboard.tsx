@@ -47,6 +47,9 @@ const NAV = [
     {id:"multi-company",   label:"مقارنة الشركات",        icon:"🏢"},
     {id:"monthly",         label:"أداء شهري للشركات",     icon:"📅"},
   ]},
+  { s:"الدعم والعملاء",   items:[
+    {id:"helpdesk",        label:"الدعم الفني Helpdesk",  icon:"🎫"},
+  ]},
   { s:"الذكاء AI",        items:[
     {id:"advisor",         label:"المستشار AI",            icon:"🤖"},
     {id:"chatbot",         label:"شات بوت مالي",          icon:"💬"},
@@ -2596,6 +2599,304 @@ function BudgetMonitorPage({ companyId, co }:any) {
 
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎫 لوحة الدعم الفني — Helpdesk Dashboard
+// ══════════════════════════════════════════════════════════════════════════════
+function HelpdeskPage({ companyId, co }:any) {
+  const yr = new Date().getFullYear();
+  const [dF, setDF]     = useState(`${yr}-01-01`);
+  const [dT, setDT]     = useState(new Date().toISOString().split("T")[0]);
+  const [search, setSearch] = useState("");
+  const [filterStage, setStage] = useState("all");
+  const [filterPrio, setPrio]   = useState("all");
+  const [selTicket, setTicket]  = useState<any>(null);
+  const [view, setView]         = useState<"dashboard"|"tickets">("dashboard");
+
+  const { data, isLoading, error } = (trpc as any).journal.getHelpdeskData.useQuery(
+    { companyId, dateFrom:dF, dateTo:dT, limit:500 },
+    { enabled:!!companyId, staleTime:3*60*1000, retry:1 }
+  );
+
+  if (!companyId) return <NoData text="اختر شركة أولاً"/>;
+  if (isLoading) return (
+    <div style={{ textAlign:"center", padding:80 }}>
+      <Spinner/>
+      <p style={{ color:C.muted, marginTop:14 }}>جاري جلب بيانات Helpdesk من Odoo...</p>
+    </div>
+  );
+  if (error || !data) return (
+    <Card style={{ padding:40, textAlign:"center" }}>
+      <div style={{ fontSize:32, marginBottom:12 }}>⚠️</div>
+      <p style={{ fontWeight:700, color:C.red, marginBottom:8 }}>تعذّر الاتصال بـ Helpdesk</p>
+      <p style={{ fontSize:12, color:C.textSec, marginBottom:16 }}>
+        تأكد من تفعيل موديل Helpdesk في Odoo وإعدادات الاتصال الصحيحة
+      </p>
+      <div style={{ padding:"10px 14px", borderRadius:8, background:C.redLight, fontSize:11, color:C.red, maxWidth:400, margin:"0 auto" }}>
+        {String((error as any)?.message || "خطأ في الاتصال")}
+      </div>
+    </Card>
+  );
+
+  const s    = data.summary;
+  const tix: any[] = data.tickets || [];
+
+  const filtered = tix.filter((t:any) => {
+    if (search && !t.name.includes(search) && !t.partner.includes(search) && !t.assignee.includes(search)) return false;
+    if (filterStage !== "all" && t.stage !== filterStage) return false;
+    if (filterPrio  !== "all" && t.priority !== filterPrio) return false;
+    return true;
+  });
+
+  const PIE   = [C.primary, C.teal, C.amber, C.purple, C.red, C.green, "#06B6D4", "#F97316"];
+  const prioColor: Record<string,{c:string,bg:string}> = {
+    "عادي":    {c:C.teal,  bg:C.tealLight},
+    "منخفض":   {c:C.muted, bg:C.bg},
+    "عالي":    {c:C.amber, bg:C.amberLight},
+    "عاجل":    {c:C.red,   bg:C.redLight},
+  };
+
+  return (
+    <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+        <div>
+          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎫 لوحة الدعم الفني — Helpdesk</h2>
+          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+            <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
+            <Badge label={`${s.total} تذكرة إجمالية`} bg={C.primaryLight} color={C.primary}/>
+            {s.overdue > 0 && <Badge label={`⏰ ${s.overdue} متأخرة`} bg={C.redLight} color={C.red}/>}
+            {s.slaFailed > 0 && <Badge label={`❌ SLA فشل: ${s.slaFailed}`} bg={C.amberLight} color={C.amber}/>}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <span style={{ color:C.muted, alignSelf:"center" }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+          <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", border:`1px solid ${C.border}` }}>
+            {[{k:"dashboard",l:"📊 لوحة"},{k:"tickets",l:"📋 تذاكر"}].map(v=>(
+              <button key={v.k} onClick={()=>setView(v.k as any)} style={{ padding:"6px 14px", border:"none", background:view===v.k?C.primary:"transparent", color:view===v.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:view===v.k?700:400 }}>{v.l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:16 }}>
+        {[
+          {l:"إجمالي التذاكر",  v:String(s.total),              icon:"🎫", c:C.primary, bg:C.primaryLight},
+          {l:"تذاكر مفتوحة",   v:String(s.open),               icon:"🔓", c:C.amber,   bg:C.amberLight},
+          {l:"تذاكر مغلقة",    v:String(s.closed),             icon:"✅", c:C.green,   bg:C.greenLight},
+          {l:"متوسط وقت الحل", v:`${s.avgResolutionHours}س`,   icon:"⏱️", c:C.teal,    bg:C.tealLight},
+        ].map((k,i)=>(
+          <div key={i} style={{ padding:"14px 16px", borderRadius:12, background:k.bg }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <div>
+                <p style={{ fontSize:10, color:C.textSec, margin:"0 0 4px" }}>{k.l}</p>
+                <p style={{ fontSize:22, fontWeight:900, color:k.c, margin:0 }}>{k.v}</p>
+              </div>
+              <span style={{ fontSize:22 }}>{k.icon}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {view === "dashboard" && (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          {/* By Stage */}
+          <Card style={{ padding:"18px 20px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📊 حسب الحالة</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {(data.byStage||[]).map((st:any,i:number)=>(
+                <div key={i}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                    <span style={{ fontSize:12, color:C.text }}>{st.name}</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:PIE[i%PIE.length] }}>{st.count}</span>
+                  </div>
+                  <div style={{ background:C.border, borderRadius:4, height:7 }}>
+                    <div style={{ width:`${s.total>0?st.count/s.total*100:0}%`, height:"100%", background:PIE[i%PIE.length], borderRadius:4 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* By Team */}
+          <Card style={{ padding:"18px 20px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>👥 حسب الفريق</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {(data.byTeam||[]).map((tm:any,i:number)=>(
+                <div key={i}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                    <span style={{ fontSize:12, color:C.text }}>{tm.name}</span>
+                    <Badge label={String(tm.count)} bg={C.primaryLight} color={C.primary}/>
+                  </div>
+                  <div style={{ background:C.border, borderRadius:4, height:7 }}>
+                    <div style={{ width:`${s.total>0?tm.count/s.total*100:0}%`, height:"100%", background:C.primary, borderRadius:4 }}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* By Priority */}
+          <Card style={{ padding:"18px 20px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>🔴 حسب الأولوية</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              {(data.byPriority||[]).map((p:any,i:number)=>{
+                const pc = prioColor[p.name]||{c:C.muted,bg:C.bg};
+                return (
+                  <div key={i} style={{ padding:"10px 12px", borderRadius:9, background:pc.bg, textAlign:"center" }}>
+                    <p style={{ fontSize:11, color:pc.c, margin:"0 0 4px" }}>{p.name}</p>
+                    <p style={{ fontSize:20, fontWeight:900, color:pc.c, margin:0 }}>{p.count}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Top Customers */}
+          <Card style={{ padding:"18px 20px" }}>
+            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>🏆 أكثر العملاء تذاكراً</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {(data.topPartners||[]).slice(0,7).map((p:any,i:number)=>(
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:11, color:C.muted, minWidth:16 }}>{i+1}</span>
+                    <span style={{ fontSize:12, color:C.text, fontWeight:i<3?700:400 }}>{p.name.slice(0,22)}</span>
+                  </div>
+                  <Badge label={String(p.count)} bg={i===0?C.amberLight:C.bg} color={i===0?C.amber:C.muted}/>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* By Type */}
+          {(data.byType||[]).length > 0 && (
+            <Card style={{ padding:"18px 20px", gridColumn:"1/-1" }}>
+              <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📁 حسب نوع التذكرة</p>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                {(data.byType||[]).map((tp:any,i:number)=>(
+                  <div key={i} style={{ padding:"8px 14px", borderRadius:20, background:PIE[i%PIE.length]+"20", border:`1px solid ${PIE[i%PIE.length]}40`, display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:16, fontWeight:900, color:PIE[i%PIE.length] }}>{tp.count}</span>
+                    <span style={{ fontSize:11, color:C.text }}>{tp.name}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {view === "tickets" && (
+        <div>
+          {/* Filters */}
+          <Card style={{ padding:"12px 16px", marginBottom:12 }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 بحث في التذاكر..."
+                style={{ flex:2, minWidth:160, padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
+              <select value={filterStage} onChange={e=>setStage(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12 }}>
+                <option value="all">كل الحالات</option>
+                {(data.stages||[]).map((s:any)=><option key={s.id} value={s.name}>{s.name}</option>)}
+              </select>
+              <select value={filterPrio} onChange={e=>setPrio(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12 }}>
+                <option value="all">كل الأولويات</option>
+                {["عادي","منخفض","عالي","عاجل"].map(p=><option key={p} value={p}>{p}</option>)}
+              </select>
+              <span style={{ fontSize:11, color:C.muted }}>{filtered.length} تذكرة</span>
+            </div>
+          </Card>
+
+          <Card style={{ overflow:"hidden" }}>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead>
+                  <tr style={{ background:C.primaryLight }}>
+                    {["#","الموضوع","العميل","الفريق","النوع","الحالة","الأولوية","المسؤول","تاريخ الإنشاء","الموعد",""].map(h=>(
+                      <th key={h} style={{ padding:"9px 10px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap", fontSize:10 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr><td colSpan={10} style={{ padding:24, textAlign:"center", color:C.muted }}>لا توجد تذاكر مطابقة</td></tr>
+                  ) : filtered.map((t:any,i:number)=>{
+                    const pc  = prioColor[t.priority]||{c:C.muted,bg:C.bg};
+                    const isOD = t.isOverdue;
+                    return (
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:isOD?"#FFF5F5":i%2===0?"#fff":"#F8FAFF", cursor:"pointer" }}
+                        onClick={()=>setTicket(selTicket?.id===t.id?null:t)}
+                        onMouseEnter={e=>(e.currentTarget as any).style.background=C.primaryLight}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background=isOD?"#FFF5F5":i%2===0?"#fff":"#F8FAFF"}>
+                        <td style={{ padding:"8px 10px", color:C.muted, fontFamily:"monospace" }}>#{t.id}</td>
+                        <td style={{ padding:"8px 10px", color:C.text, fontWeight:600, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {t.slaFail && <span style={{ color:C.red, marginLeft:4 }}>⚠️</span>}
+                          {isOD && <span style={{ color:C.amber, marginLeft:4 }}>⏰</span>}
+                          {t.name}
+                        </td>
+                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.partner.slice(0,16)}</td>
+                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.team.slice(0,14)}</td>
+                        <td style={{ padding:"8px 10px", color:C.muted, fontSize:10 }}>{t.type.slice(0,14)||"—"}</td>
+                        <td style={{ padding:"8px 10px" }}><Badge label={t.stage} bg={C.bg} color={C.textSec}/></td>
+                        <td style={{ padding:"8px 10px" }}><Badge label={t.priority} bg={pc.bg} color={pc.c}/></td>
+                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.assignee.slice(0,14)||"—"}</td>
+                        <td style={{ padding:"8px 10px", color:C.muted, fontFamily:"monospace", fontSize:10 }}>{t.created}</td>
+                        <td style={{ padding:"8px 10px", color:isOD?C.red:C.muted, fontFamily:"monospace", fontSize:10 }}>{t.deadline||"—"}</td>
+                        <td style={{ padding:"8px 10px" }}>{t.closed && <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* Ticket Detail Modal */}
+          {selTicket && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, direction:"rtl" }}
+              onClick={()=>setTicket(null)}>
+              <div onClick={e=>e.stopPropagation()} style={{ background:C.surface, borderRadius:16, padding:24, maxWidth:520, width:"94%", boxShadow:"0 20px 60px rgba(0,0,0,0.25)", border:`1px solid ${C.border}`, maxHeight:"80vh", overflowY:"auto" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+                  <div>
+                    <p style={{ fontSize:16, fontWeight:900, color:C.text, margin:"0 0 6px" }}>🎫 {selTicket.name}</p>
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                      <Badge label={`#${selTicket.id}`} bg={C.bg} color={C.muted}/>
+                      <Badge label={selTicket.priority} bg={(prioColor[selTicket.priority]||{bg:C.bg}).bg} color={(prioColor[selTicket.priority]||{c:C.muted}).c}/>
+                      <Badge label={selTicket.stage} bg={C.primaryLight} color={C.primary}/>
+                      {selTicket.closed && <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>}
+                      {selTicket.isOverdue && <Badge label="⏰ متأخرة" bg={C.redLight} color={C.red}/>}
+                      {selTicket.slaFail && <Badge label="⚠️ SLA فشل" bg={C.amberLight} color={C.amber}/>}
+                    </div>
+                  </div>
+                  <button onClick={()=>setTicket(null)} style={{ background:"transparent", border:"none", fontSize:22, cursor:"pointer", color:C.muted }}>×</button>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                  {[
+                    {l:"العميل",       v:selTicket.partner   ||"—"},
+                    {l:"المسؤول",      v:selTicket.assignee  ||"—"},
+                    {l:"الفريق",       v:selTicket.team      ||"—"},
+                    {l:"النوع",        v:selTicket.type      ||"—"},
+                    {l:"تاريخ الإنشاء",v:selTicket.created   ||"—"},
+                    {l:"الموعد النهائي",v:selTicket.deadline  ||"—"},
+                    {l:"تاريخ الإغلاق",v:selTicket.closed    ||"مفتوحة"},
+                  ].map((s,i)=>(
+                    <div key={i} style={{ padding:"10px 12px", borderRadius:8, background:C.bg }}>
+                      <p style={{ fontSize:10, color:C.muted, margin:"0 0 3px" }}>{s.l}</p>
+                      <p style={{ fontSize:12, fontWeight:600, color:C.text, margin:0 }}>{s.v}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 export default function Dashboard({ user, onLogout }:{ user:any; onLogout:()=>void }) {
   const [page, setPage]      = useState("dashboard");
   const [open, setOpen]      = useState(true);
@@ -4830,6 +5131,7 @@ function ExportPage({ companyId, co }:any) {
       case "budget-monitor":    return <BudgetMonitorPage companyId={companyId} co={co}/>;;
       case "advanced":          return <AdvancedAnalysisPage companyId={companyId} co={co}/>;
       case "export":            return <ExportPage companyId={companyId} co={co}/>;
+      case "helpdesk":          return <HelpdeskPage companyId={companyId} co={co}/>;
       case "advisor":           return <AdvisorPage companyId={companyId} co={co}/>;
       case "chatbot":           return <ChatbotPage companyId={companyId} co={co}/>;
       case "users":             return user.role==="cfo_admin"?<UsersPage currentUser={user}/>:<NoData text="غير مصرح"/>;

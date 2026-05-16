@@ -344,3 +344,75 @@ export class OdooConnector {
     return this.version.full || "unknown";
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎫 Helpdesk Integration
+// ══════════════════════════════════════════════════════════════════════════════
+
+export async function fetchHelpdeskData(
+  url: string, db: string, username: string, password: string,
+  companyId?: number,
+  options: { dateFrom?: string; dateTo?: string; limit?: number } = {}
+) {
+  // Authenticate
+  const authRes = await fetch(`${url}/web/dataset/call_kw`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:1,
+      params: { model:"res.users", method:"authenticate", args:[db, username, password, {}], kwargs:{} }
+    })
+  });
+  const { result: uid } = await authRes.json() as any;
+  if (!uid) throw new Error("فشل تسجيل الدخول في Odoo");
+
+  const call = async (model: string, method: string, args: any[], kwargs: any = {}) => {
+    const res = await fetch(`${url}/web/dataset/call_kw`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:2,
+        params: { model, method, args, kwargs:{ ...kwargs, context:{ uid } } }
+      })
+    });
+    return ((await res.json()) as any).result;
+  };
+
+  // Build domain filter
+  const domain: any[] = [["team_id", "!=", false]];
+  if (companyId) domain.push(["company_id", "=", companyId]);
+  if (options.dateFrom) domain.push(["create_date", ">=", options.dateFrom + " 00:00:00"]);
+  if (options.dateTo)   domain.push(["create_date", "<=", options.dateTo   + " 23:59:59"]);
+
+  // Fields to fetch
+  const ticketFields = [
+    "id", "name", "ticket_type_id", "team_id", "user_id",
+    "partner_id", "partner_name", "stage_id", "priority",
+    "kanban_state", "create_date", "date_deadline", "close_date",
+    "sla_status_ids", "sla_fail",
+    "tag_ids", "description", "company_id",
+  ];
+
+  // Fetch tickets
+  const tickets = await call("helpdesk.ticket", "search_read",
+    [domain], { fields: ticketFields, limit: options.limit || 5000, order: "create_date desc" }
+  );
+
+  // Fetch teams
+  const teams = await call("helpdesk.team", "search_read",
+    [[]], { fields: ["id","name","company_id","member_ids"] }
+  ).catch(() => []);
+
+  // Fetch stages
+  const stages = await call("helpdesk.stage", "search_read",
+    [[]], { fields: ["id","name","sequence","fold"] }
+  ).catch(() => []);
+
+  // Fetch ticket types
+  const types = await call("helpdesk.ticket.type", "search_read",
+    [[]], { fields: ["id","name"] }
+  ).catch(() => []);
+
+  // SLA data
+  const slaData = await call("helpdesk.sla", "search_read",
+    [[]], { fields: ["id","name","team_id","time_days","time_hours","priority"] }
+  ).catch(() => []);
+
+  return { tickets: tickets || [], teams: teams || [], stages: stages || [], types: types || [], slas: slaData || [] };
+}
