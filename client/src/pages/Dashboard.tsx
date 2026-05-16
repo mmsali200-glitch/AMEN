@@ -2603,246 +2603,654 @@ function BudgetMonitorPage({ companyId, co }:any) {
 // ══════════════════════════════════════════════════════════════════════════════
 // 🎫 لوحة الدعم الفني — Helpdesk Dashboard
 // ══════════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🎫 لوحة تحليلات الدعم الفني — Helpdesk Analytics Dashboard
+// ══════════════════════════════════════════════════════════════════════════════
 function HelpdeskPage({ companyId, co }:any) {
   const yr = new Date().getFullYear();
-  const [dF, setDF]     = useState(`${yr}-01-01`);
-  const [dT, setDT]     = useState(new Date().toISOString().split("T")[0]);
-  const [search, setSearch] = useState("");
+  const [dF, setDF]       = useState(`${yr}-01-01`);
+  const [dT, setDT]       = useState(new Date().toISOString().split("T")[0]);
+  const [tab, setTab]     = useState<"overview"|"performance"|"sla"|"trends"|"agents"|"customers"|"tickets">("overview");
+  const [search, setSearch]   = useState("");
   const [filterStage, setStage] = useState("all");
   const [filterPrio, setPrio]   = useState("all");
+  const [filterTeam, setTeam]   = useState("all");
   const [selTicket, setTicket]  = useState<any>(null);
-  const [view, setView]         = useState<"dashboard"|"tickets">("dashboard");
 
   const { data, isLoading, error } = (trpc as any).journal.getHelpdeskData.useQuery(
-    { companyId, dateFrom:dF, dateTo:dT, limit:500 },
+    { companyId, dateFrom:dF, dateTo:dT, limit:1000 },
     { enabled:!!companyId, staleTime:3*60*1000, retry:1 }
   );
 
   if (!companyId) return <NoData text="اختر شركة أولاً"/>;
-  if (isLoading) return (
-    <div style={{ textAlign:"center", padding:80 }}>
-      <Spinner/>
-      <p style={{ color:C.muted, marginTop:14 }}>جاري جلب بيانات Helpdesk من Odoo...</p>
-    </div>
-  );
-  if (error || !data) return (
-    <Card style={{ padding:40, textAlign:"center" }}>
-      <div style={{ fontSize:32, marginBottom:12 }}>⚠️</div>
-      <p style={{ fontWeight:700, color:C.red, marginBottom:8 }}>تعذّر الاتصال بـ Helpdesk</p>
-      <p style={{ fontSize:12, color:C.textSec, marginBottom:16 }}>
-        تأكد من تفعيل موديل Helpdesk في Odoo وإعدادات الاتصال الصحيحة
-      </p>
-      <div style={{ padding:"10px 14px", borderRadius:8, background:C.redLight, fontSize:11, color:C.red, maxWidth:400, margin:"0 auto" }}>
-        {String((error as any)?.message || "خطأ في الاتصال")}
-      </div>
-    </Card>
-  );
 
-  const s    = data.summary;
-  const tix: any[] = data.tickets || [];
+  const isErr = !isLoading && (error || !data || !data.summary);
+
+  const s     = data?.summary || { total:0, open:0, closed:0, slaFailed:0, highPriority:0, overdue:0, avgResolutionHours:0 };
+  const tix: any[] = data?.tickets   || [];
+  const arM = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  const PIE = [C.primary,C.teal,C.amber,C.purple,C.red,C.green,"#06B6D4","#F97316","#8B5CF6","#EC4899"];
+
+  const prioColor:Record<string,{c:string,bg:string}> = {
+    "عادي":{c:C.teal,bg:C.tealLight}, "منخفض":{c:C.muted,bg:C.bg},
+    "عالي":{c:C.amber,bg:C.amberLight}, "عاجل":{c:C.red,bg:C.redLight},
+  };
+
+  // ── حسابات متقدمة ──────────────────────────────────────────────────────────
+  // حسب الشهر
+  const byMonth: Record<string,{open:number,closed:number}> = {};
+  for (const t of tix) {
+    const m = (t.created||"").slice(0,7);
+    if (!m) continue;
+    if (!byMonth[m]) byMonth[m] = {open:0,closed:0};
+    if (t.closed) byMonth[m].closed++; else byMonth[m].open++;
+  }
+  const monthEntries = Object.entries(byMonth).sort(([a],[b])=>a.localeCompare(b));
+  const maxMonth = Math.max(...monthEntries.map(([,v])=>v.open+v.closed), 1);
+
+  // حسب يوم الأسبوع
+  const days = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+  const byDay: number[] = [0,0,0,0,0,0,0];
+  for (const t of tix) {
+    if (t.created) { const d = new Date(t.created).getDay(); byDay[d]++; }
+  }
+  const maxDay = Math.max(...byDay, 1);
+
+  // حسب الساعة
+  const byHour: number[] = Array(24).fill(0);
+  for (const t of tix) {
+    if (t.created) {
+      try { const d = new Date(t.created); byHour[d.getHours()]++; } catch{}
+    }
+  }
+
+  // Agent workload
+  const agentMap: Record<string,{total:number,open:number,closed:number,overdue:number,avgHours:number,hours:number[]}> = {};
+  for (const t of tix) {
+    const a = t.assignee || "غير معين";
+    if (!agentMap[a]) agentMap[a] = {total:0,open:0,closed:0,overdue:0,avgHours:0,hours:[]};
+    agentMap[a].total++;
+    if (t.closed) agentMap[a].closed++; else agentMap[a].open++;
+    if (t.isOverdue) agentMap[a].overdue++;
+    if (t.closed && t.created) {
+      const h = (new Date(t.closed).getTime() - new Date(t.created).getTime()) / 3600000;
+      if (h > 0) agentMap[a].hours.push(h);
+    }
+  }
+  const agents = Object.entries(agentMap).map(([name,d])=>({
+    name, ...d,
+    avgHours: d.hours.length ? Math.round(d.hours.reduce((s,v)=>s+v,0)/d.hours.length) : 0,
+    closedRate: d.total > 0 ? Math.round(d.closed/d.total*100) : 0,
+  })).sort((a,b)=>b.total-a.total);
+
+  // Customer analysis
+  const custMap: Record<string,{total:number,open:number,closed:number,priorities:string[]}> = {};
+  for (const t of tix) {
+    const c = t.partner || "غير معروف";
+    if (!custMap[c]) custMap[c] = {total:0,open:0,closed:0,priorities:[]};
+    custMap[c].total++;
+    if (t.closed) custMap[c].closed++; else custMap[c].open++;
+    custMap[c].priorities.push(t.priority);
+  }
+  const customers = Object.entries(custMap).map(([name,d])=>({
+    name, ...d,
+    urgentCount: d.priorities.filter(p=>p==="عاجل").length,
+    satisfaction: d.total > 0 ? Math.round(d.closed/d.total*100) : 0,
+  })).sort((a,b)=>b.total-a.total);
+
+  // SLA analysis
+  const slaTotal  = tix.length;
+  const slaPassed = tix.filter((t:any)=>!t.slaFail).length;
+  const slaPct    = slaTotal > 0 ? Math.round(slaPassed/slaTotal*100) : 0;
+  const overdueByTeam: Record<string,number> = {};
+  for (const t of tix) { if (t.isOverdue) { const tm = t.team||"—"; overdueByTeam[tm]=(overdueByTeam[tm]||0)+1; } }
+
+  // Resolution time buckets
+  const rtBuckets = [{l:"<1 ساعة",min:0,max:1},{l:"1-8 ساعات",min:1,max:8},{l:"8-24 ساعة",min:8,max:24},{l:"1-3 أيام",min:24,max:72},{l:">3 أيام",min:72,max:99999}];
+  const rtCounts: number[] = Array(5).fill(0);
+  for (const t of tix) {
+    if (t.closed && t.created) {
+      const h = (new Date(t.closed).getTime()-new Date(t.created).getTime())/3600000;
+      const idx = rtBuckets.findIndex(b=>h>=b.min&&h<b.max);
+      if (idx>=0) rtCounts[idx]++;
+    }
+  }
 
   const filtered = tix.filter((t:any) => {
-    if (search && !t.name.includes(search) && !t.partner.includes(search) && !t.assignee.includes(search)) return false;
-    if (filterStage !== "all" && t.stage !== filterStage) return false;
-    if (filterPrio  !== "all" && t.priority !== filterPrio) return false;
+    if (search && !t.name?.includes(search) && !t.partner?.includes(search)) return false;
+    if (filterStage!=="all" && t.stage!==filterStage) return false;
+    if (filterPrio!=="all"  && t.priority!==filterPrio) return false;
+    if (filterTeam!=="all"  && t.team!==filterTeam) return false;
     return true;
   });
 
-  const PIE   = [C.primary, C.teal, C.amber, C.purple, C.red, C.green, "#06B6D4", "#F97316"];
-  const prioColor: Record<string,{c:string,bg:string}> = {
-    "عادي":    {c:C.teal,  bg:C.tealLight},
-    "منخفض":   {c:C.muted, bg:C.bg},
-    "عالي":    {c:C.amber, bg:C.amberLight},
-    "عاجل":    {c:C.red,   bg:C.redLight},
-  };
+  const TABS = [
+    {k:"overview",    l:"📊 نظرة عامة"},
+    {k:"performance", l:"⚡ الأداء"},
+    {k:"sla",         l:"🎯 SLA"},
+    {k:"trends",      l:"📈 الاتجاهات"},
+    {k:"agents",      l:"👥 الوكلاء"},
+    {k:"customers",   l:"🏢 العملاء"},
+    {k:"tickets",     l:"📋 التذاكر"},
+  ];
 
   return (
     <div style={{ padding:"0 24px 28px", direction:"rtl" }}>
       {/* Header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:8 }}>
         <div>
-          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎫 لوحة الدعم الفني — Helpdesk</h2>
+          <h2 style={{ fontSize:20, fontWeight:900, color:C.text, margin:0 }}>🎫 تحليلات الدعم الفني — Helpdesk</h2>
           <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
             <span style={{ fontSize:12, color:C.textSec }}>{co?.name}</span>
-            <Badge label={`${s.total} تذكرة إجمالية`} bg={C.primaryLight} color={C.primary}/>
-            {s.overdue > 0 && <Badge label={`⏰ ${s.overdue} متأخرة`} bg={C.redLight} color={C.red}/>}
-            {s.slaFailed > 0 && <Badge label={`❌ SLA فشل: ${s.slaFailed}`} bg={C.amberLight} color={C.amber}/>}
+            {!isLoading && !isErr && <>
+              <Badge label={`${s.total} تذكرة`} bg={C.primaryLight} color={C.primary}/>
+              <Badge label={`${slaPct}% SLA`} bg={slaPct>80?C.greenLight:C.amberLight} color={slaPct>80?C.green:C.amber}/>
+              {s.overdue>0 && <Badge label={`⏰ ${s.overdue} متأخرة`} bg={C.redLight} color={C.red}/>}
+            </>}
           </div>
         </div>
         <div style={{ display:"flex", gap:6 }}>
-          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
-          <span style={{ color:C.muted, alignSelf:"center" }}>—</span>
-          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
-          <div style={{ display:"flex", gap:0, borderRadius:8, overflow:"hidden", border:`1px solid ${C.border}` }}>
-            {[{k:"dashboard",l:"📊 لوحة"},{k:"tickets",l:"📋 تذاكر"}].map(v=>(
-              <button key={v.k} onClick={()=>setView(v.k as any)} style={{ padding:"6px 14px", border:"none", background:view===v.k?C.primary:"transparent", color:view===v.k?"#fff":C.textSec, cursor:"pointer", fontSize:12, fontWeight:view===v.k?700:400 }}>{v.l}</button>
-            ))}
-          </div>
+          {["هذا الشهر","هذه السنة","آخر 3 أشهر"].map((l,i)=>(
+            <button key={i} onClick={()=>{
+              const now=new Date();
+              if(i===0){setDF(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`);setDT(now.toISOString().split("T")[0]);}
+              if(i===1){setDF(`${now.getFullYear()}-01-01`);setDT(now.toISOString().split("T")[0]);}
+              if(i===2){const d=new Date(now);d.setMonth(d.getMonth()-3);setDF(d.toISOString().split("T")[0]);setDT(now.toISOString().split("T")[0]);}
+            }} style={{ padding:"5px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:C.bg,cursor:"pointer",fontSize:11,color:C.textSec }}>
+              {l}
+            </button>
+          ))}
+          <input type="date" value={dF} onChange={e=>setDF(e.target.value)} style={{ padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11,outline:"none" }}/>
+          <span style={{ color:C.muted,alignSelf:"center" }}>—</span>
+          <input type="date" value={dT} onChange={e=>setDT(e.target.value)} style={{ padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11,outline:"none" }}/>
         </div>
       </div>
 
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:16 }}>
-        {[
-          {l:"إجمالي التذاكر",  v:String(s.total),              icon:"🎫", c:C.primary, bg:C.primaryLight},
-          {l:"تذاكر مفتوحة",   v:String(s.open),               icon:"🔓", c:C.amber,   bg:C.amberLight},
-          {l:"تذاكر مغلقة",    v:String(s.closed),             icon:"✅", c:C.green,   bg:C.greenLight},
-          {l:"متوسط وقت الحل", v:`${s.avgResolutionHours}س`,   icon:"⏱️", c:C.teal,    bg:C.tealLight},
-        ].map((k,i)=>(
-          <div key={i} style={{ padding:"14px 16px", borderRadius:12, background:k.bg }}>
-            <div style={{ display:"flex", justifyContent:"space-between" }}>
-              <div>
-                <p style={{ fontSize:10, color:C.textSec, margin:"0 0 4px" }}>{k.l}</p>
-                <p style={{ fontSize:22, fontWeight:900, color:k.c, margin:0 }}>{k.v}</p>
-              </div>
-              <span style={{ fontSize:22 }}>{k.icon}</span>
-            </div>
-          </div>
+      {/* Tabs */}
+      <div style={{ display:"flex",gap:2,marginBottom:16,borderBottom:`2px solid ${C.border}`,overflowX:"auto" }}>
+        {TABS.map(t=>(
+          <button key={t.k} onClick={()=>setTab(t.k as any)}
+            style={{ padding:"9px 16px",border:"none",borderBottom:`2.5px solid ${tab===t.k?C.primary:"transparent"}`,background:"transparent",color:tab===t.k?C.primary:C.textSec,cursor:"pointer",fontSize:12,fontWeight:tab===t.k?800:400,marginBottom:-2,whiteSpace:"nowrap" }}>
+            {t.l}
+          </button>
         ))}
       </div>
 
-      {view === "dashboard" && (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          {/* By Stage */}
-          <Card style={{ padding:"18px 20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📊 حسب الحالة</p>
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {(data.byStage||[]).map((st:any,i:number)=>(
-                <div key={i}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-                    <span style={{ fontSize:12, color:C.text }}>{st.name}</span>
-                    <span style={{ fontSize:12, fontWeight:700, color:PIE[i%PIE.length] }}>{st.count}</span>
+      {isLoading && <div style={{ textAlign:"center",padding:80 }}><Spinner/><p style={{ color:C.muted,marginTop:12 }}>جاري تحليل بيانات Helpdesk...</p></div>}
+      {isErr    && <Card style={{ padding:40,textAlign:"center" }}><p style={{ color:C.red,fontWeight:700 }}>⚠️ تعذّر الاتصال — تأكد من تفعيل موديل Helpdesk في Odoo</p></Card>}
+
+      {!isLoading && !isErr && <>
+
+      {/* ════ OVERVIEW ════ */}
+      {tab==="overview" && (
+        <>
+          {/* KPIs */}
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14 }}>
+            {[
+              {l:"إجمالي التذاكر",    v:String(s.total),              icon:"🎫",c:C.primary, bg:C.primaryLight, sub:"الفترة المحددة"},
+              {l:"مفتوحة",            v:String(s.open),               icon:"🔓",c:C.amber,   bg:C.amberLight,   sub:`${s.total>0?Math.round(s.open/s.total*100):0}% من الإجمالي`},
+              {l:"مغلقة ✅",          v:String(s.closed),             icon:"✅",c:C.green,   bg:C.greenLight,   sub:`${s.total>0?Math.round(s.closed/s.total*100):0}% معدل الإغلاق`},
+              {l:"SLA فشل",           v:String(s.slaFailed),          icon:"❌",c:C.red,     bg:C.redLight,     sub:`${slaTotal>0?Math.round(s.slaFailed/slaTotal*100):0}% من التذاكر`},
+              {l:"متأخرة",            v:String(s.overdue),            icon:"⏰",c:C.red,     bg:C.redLight,     sub:"تجاوزت الموعد"},
+              {l:"أولوية عالية/عاجل", v:String(s.highPriority),       icon:"🔴",c:C.amber,   bg:C.amberLight,   sub:"تحتاج تدخل سريع"},
+              {l:"متوسط وقت الحل",    v:`${s.avgResolutionHours}س`,   icon:"⏱️",c:C.teal,    bg:C.tealLight,    sub:"ساعة"},
+              {l:"SLA نجح",           v:`${slaPct}%`,                  icon:"🎯",c:slaPct>80?C.green:C.amber, bg:slaPct>80?C.greenLight:C.amberLight, sub:`${slaPassed} تذكرة`},
+            ].map((k,i)=>(
+              <div key={i} style={{ padding:"14px 16px",borderRadius:12,background:k.bg }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+                  <div>
+                    <p style={{ fontSize:10,color:C.textSec,margin:"0 0 4px" }}>{k.l}</p>
+                    <p style={{ fontSize:22,fontWeight:900,color:k.c,margin:"0 0 2px" }}>{k.v}</p>
+                    <p style={{ fontSize:10,color:C.muted,margin:0 }}>{k.sub}</p>
                   </div>
-                  <div style={{ background:C.border, borderRadius:4, height:7 }}>
-                    <div style={{ width:`${s.total>0?st.count/s.total*100:0}%`, height:"100%", background:PIE[i%PIE.length], borderRadius:4 }}/>
+                  <span style={{ fontSize:20 }}>{k.icon}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14 }}>
+            {/* By Stage */}
+            <Card style={{ padding:"18px 20px" }}>
+              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>📊 حسب الحالة</p>
+              {(data.byStage||[]).slice(0,8).map((st:any,i:number)=>(
+                <div key={i} style={{ marginBottom:10 }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}>
+                    <span style={{ fontSize:11,color:C.text }}>{st.name}</span>
+                    <span style={{ fontSize:11,fontWeight:700,color:PIE[i%PIE.length] }}>{st.count} ({s.total>0?Math.round(st.count/s.total*100):0}%)</span>
                   </div>
+                  <div style={{ background:C.border,borderRadius:4,height:7 }}>
+                    <div style={{ width:`${s.total>0?st.count/s.total*100:0}%`,height:"100%",background:PIE[i%PIE.length],borderRadius:4,transition:"width 0.5s" }}/>
+                  </div>
+                </div>
+              ))}
+            </Card>
+
+            {/* By Team */}
+            <Card style={{ padding:"18px 20px" }}>
+              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>👥 حسب الفريق</p>
+              {(data.byTeam||[]).slice(0,8).map((tm:any,i:number)=>(
+                <div key={i} style={{ marginBottom:10 }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:3 }}>
+                    <span style={{ fontSize:11,color:C.text }}>{tm.name}</span>
+                    <span style={{ fontSize:11,fontWeight:700,color:C.primary }}>{tm.count}</span>
+                  </div>
+                  <div style={{ background:C.border,borderRadius:4,height:7 }}>
+                    <div style={{ width:`${s.total>0?tm.count/s.total*100:0}%`,height:"100%",background:C.primary,borderRadius:4 }}/>
+                  </div>
+                </div>
+              ))}
+            </Card>
+
+            {/* By Priority */}
+            <Card style={{ padding:"18px 20px" }}>
+              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 14px" }}>🔴 حسب الأولوية</p>
+              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12 }}>
+                {(data.byPriority||[]).map((p:any,i:number)=>{
+                  const pc=prioColor[p.name]||{c:C.muted,bg:C.bg};
+                  return (
+                    <div key={i} style={{ padding:"12px",borderRadius:9,background:pc.bg,textAlign:"center" }}>
+                      <p style={{ fontSize:10,color:pc.c,margin:"0 0 4px" }}>{p.name}</p>
+                      <p style={{ fontSize:22,fontWeight:900,color:pc.c,margin:"0 0 2px" }}>{p.count}</p>
+                      <p style={{ fontSize:9,color:C.muted,margin:0 }}>{s.total>0?Math.round(p.count/s.total*100):0}%</p>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Type breakdown */}
+              <p style={{ fontWeight:700,fontSize:11,color:C.textSec,margin:"8px 0 6px" }}>حسب النوع:</p>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                {(data.byType||[]).slice(0,6).map((tp:any,i:number)=>(
+                  <span key={i} style={{ padding:"3px 8px",borderRadius:12,background:PIE[i%PIE.length]+"20",color:PIE[i%PIE.length],fontSize:10,fontWeight:600 }}>
+                    {tp.name}: {tp.count}
+                  </span>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </>
+      )}
+
+      {/* ════ PERFORMANCE ════ */}
+      {tab==="performance" && (
+        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+          {/* Resolution time distribution */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>⏱️ توزيع وقت الحل</p>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10 }}>
+              {rtBuckets.map((b,i)=>(
+                <div key={i} style={{ textAlign:"center" }}>
+                  <div style={{ height:80,display:"flex",alignItems:"flex-end",justifyContent:"center",marginBottom:6 }}>
+                    <div style={{ width:"60%",background:PIE[i],borderRadius:"4px 4px 0 0",height:`${rtCounts[i]>0?Math.max(8,(rtCounts[i]/Math.max(...rtCounts,1))*80):4}px`,transition:"height 0.5s",opacity:0.85 }}/>
+                  </div>
+                  <p style={{ fontSize:10,color:C.textSec,margin:"0 0 2px" }}>{b.l}</p>
+                  <p style={{ fontSize:16,fontWeight:900,color:PIE[i],margin:0 }}>{rtCounts[i]}</p>
                 </div>
               ))}
             </div>
           </Card>
 
-          {/* By Team */}
-          <Card style={{ padding:"18px 20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>👥 حسب الفريق</p>
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {(data.byTeam||[]).map((tm:any,i:number)=>(
-                <div key={i}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-                    <span style={{ fontSize:12, color:C.text }}>{tm.name}</span>
-                    <Badge label={String(tm.count)} bg={C.primaryLight} color={C.primary}/>
+          {/* Day of week heatmap */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📅 التذاكر حسب يوم الأسبوع</p>
+            <div style={{ display:"flex",gap:8 }}>
+              {days.map((d,i)=>(
+                <div key={i} style={{ flex:1,textAlign:"center" }}>
+                  <div style={{ height:80,display:"flex",alignItems:"flex-end",justifyContent:"center",marginBottom:6 }}>
+                    <div style={{ width:"70%",background:byDay[i]===Math.max(...byDay)?C.red:C.primary,borderRadius:"4px 4px 0 0",height:`${Math.max(6,(byDay[i]/maxDay)*80)}px`,opacity:0.8 }}/>
                   </div>
-                  <div style={{ background:C.border, borderRadius:4, height:7 }}>
-                    <div style={{ width:`${s.total>0?tm.count/s.total*100:0}%`, height:"100%", background:C.primary, borderRadius:4 }}/>
-                  </div>
+                  <p style={{ fontSize:9,color:C.textSec,margin:"0 0 2px" }}>{d.slice(0,3)}</p>
+                  <p style={{ fontSize:13,fontWeight:700,color:byDay[i]===Math.max(...byDay)?C.red:C.primary,margin:0 }}>{byDay[i]}</p>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize:11,color:C.muted,margin:"10px 0 0",textAlign:"center" }}>
+              أكثر يوم: <strong style={{ color:C.red }}>{days[byDay.indexOf(Math.max(...byDay))]}</strong> ({Math.max(...byDay)} تذكرة)
+            </p>
+          </Card>
+
+          {/* Hourly distribution */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 12px" }}>🕐 التذاكر حسب الساعة</p>
+            <div style={{ display:"flex",gap:2,alignItems:"flex-end",height:60 }}>
+              {byHour.map((v,h)=>(
+                <div key={h} title={`${h}:00 — ${v} تذكرة`} style={{ flex:1,background:v===Math.max(...byHour)?C.red:v>0?C.primary+"80":C.border,borderRadius:"2px 2px 0 0",height:`${Math.max(2,(v/Math.max(...byHour,1))*60)}px`,cursor:"pointer",transition:"height 0.4s" }}/>
+              ))}
+            </div>
+            <div style={{ display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:C.muted }}>
+              <span>12 ص</span><span>6 ص</span><span>12 ظ</span><span>6 م</span><span>11 م</span>
+            </div>
+            <p style={{ fontSize:11,color:C.muted,margin:"8px 0 0",textAlign:"center" }}>
+              ذروة التذاكر: الساعة <strong style={{ color:C.red }}>{byHour.indexOf(Math.max(...byHour))}:00</strong>
+            </p>
+          </Card>
+
+          {/* Open vs Closed trend */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📈 مفتوحة مقابل مغلقة — شهرياً</p>
+            <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:6 }}>
+              {monthEntries.map(([m,v],i)=>(
+                <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",gap:1 }} title={m}>
+                  <div style={{ width:"100%",background:C.amber,borderRadius:"2px 2px 0 0",height:`${(v.open/maxMonth)*70}px`,opacity:0.8 }}/>
+                  <div style={{ width:"100%",background:C.green,borderRadius:"2px 2px 0 0",height:`${(v.closed/maxMonth)*70}px`,opacity:0.8 }}/>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted }}>
+              {monthEntries.map(([m],i)=><span key={i}>{arM[parseInt(m.split("-")[1])-1]?.slice(0,3)}</span>)}
+            </div>
+            <div style={{ display:"flex",gap:14,justifyContent:"center",marginTop:8 }}>
+              {[{c:C.amber,l:"مفتوحة"},{c:C.green,l:"مغلقة"}].map(s=>(
+                <div key={s.l} style={{ display:"flex",gap:5,alignItems:"center" }}>
+                  <div style={{ width:10,height:10,borderRadius:2,background:s.c }}/><span style={{ fontSize:11,color:C.textSec }}>{s.l}</span>
                 </div>
               ))}
             </div>
           </Card>
+        </div>
+      )}
 
-          {/* By Priority */}
-          <Card style={{ padding:"18px 20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>🔴 حسب الأولوية</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              {(data.byPriority||[]).map((p:any,i:number)=>{
-                const pc = prioColor[p.name]||{c:C.muted,bg:C.bg};
+      {/* ════ SLA ════ */}
+      {tab==="sla" && (
+        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+          {/* SLA Gauge */}
+          <Card style={{ padding:"24px" }}>
+            <div style={{ display:"flex",gap:24,alignItems:"center",flexWrap:"wrap" }}>
+              {/* Big gauge */}
+              <div style={{ textAlign:"center",minWidth:180 }}>
+                <svg viewBox="0 0 200 120" style={{ width:200,height:120 }}>
+                  <path d="M20,100 A80,80 0 0,1 180,100" fill="none" stroke={C.border} strokeWidth="16" strokeLinecap="round"/>
+                  <path d="M20,100 A80,80 0 0,1 180,100" fill="none" stroke={slaPct>80?C.green:slaPct>60?C.amber:C.red} strokeWidth="16" strokeLinecap="round"
+                    strokeDasharray={`${(slaPct/100)*251.2} 251.2`}/>
+                  <text x="100" y="85" textAnchor="middle" fontSize="28" fontWeight="900" fill={slaPct>80?C.green:slaPct>60?C.amber:C.red}>{slaPct}%</text>
+                  <text x="100" y="108" textAnchor="middle" fontSize="11" fill={C.textSec}>معدل SLA</text>
+                </svg>
+                <p style={{ fontSize:12,color:C.textSec,margin:"4px 0 0" }}>الهدف: 90%+</p>
+              </div>
+              {/* SLA stats */}
+              <div style={{ flex:1,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
+                {[
+                  {l:"إجمالي التذاكر",    v:slaTotal,   c:C.primary},
+                  {l:"SLA نجح",           v:slaPassed,  c:C.green},
+                  {l:"SLA فشل",           v:s.slaFailed,c:C.red},
+                  {l:"نسبة الفشل",        v:`${slaTotal>0?Math.round(s.slaFailed/slaTotal*100):0}%`, c:C.red},
+                ].map((st,i)=>(
+                  <div key={i} style={{ padding:"12px 14px",borderRadius:9,background:C.bg,border:`1px solid ${C.border}` }}>
+                    <p style={{ fontSize:10,color:C.muted,margin:"0 0 4px" }}>{st.l}</p>
+                    <p style={{ fontSize:18,fontWeight:900,color:st.c,margin:0 }}>{st.v}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* Overdue by team */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 14px" }}>⏰ المتأخرة حسب الفريق</p>
+            {Object.entries(overdueByTeam).length === 0
+              ? <p style={{ color:C.green,textAlign:"center",padding:16 }}>✅ لا توجد تذاكر متأخرة!</p>
+              : Object.entries(overdueByTeam).sort(([,a],[,b])=>b-a).map(([team,count],i)=>(
+                <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:12,color:C.text }}>{team}</span>
+                  <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                    <div style={{ width:100,height:6,background:C.border,borderRadius:3,overflow:"hidden" }}>
+                      <div style={{ width:`${Math.round((count/s.overdue)*100)}%`,height:"100%",background:C.red,borderRadius:3 }}/>
+                    </div>
+                    <Badge label={`${count} متأخرة`} bg={C.redLight} color={C.red}/>
+                  </div>
+                </div>
+              ))}
+          </Card>
+
+          {/* SLA by priority */}
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 14px" }}>🔴 SLA حسب الأولوية</p>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10 }}>
+              {["عاجل","عالي","عادي","منخفض"].map(p=>{
+                const pc = prioColor[p]||{c:C.muted,bg:C.bg};
+                const prioTix = tix.filter((t:any)=>t.priority===p);
+                const prioFail = prioTix.filter((t:any)=>t.slaFail).length;
+                const pct = prioTix.length>0?Math.round((prioTix.length-prioFail)/prioTix.length*100):100;
                 return (
-                  <div key={i} style={{ padding:"10px 12px", borderRadius:9, background:pc.bg, textAlign:"center" }}>
-                    <p style={{ fontSize:11, color:pc.c, margin:"0 0 4px" }}>{p.name}</p>
-                    <p style={{ fontSize:20, fontWeight:900, color:pc.c, margin:0 }}>{p.count}</p>
+                  <div key={p} style={{ padding:"14px",borderRadius:10,background:pc.bg,textAlign:"center" }}>
+                    <p style={{ fontSize:11,color:pc.c,fontWeight:700,margin:"0 0 8px" }}>{p}</p>
+                    <p style={{ fontSize:24,fontWeight:900,color:pct>80?C.green:C.red,margin:"0 0 4px" }}>{pct}%</p>
+                    <p style={{ fontSize:10,color:C.muted,margin:0 }}>{prioTix.length} تذكرة</p>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ════ TRENDS ════ */}
+      {tab==="trends" && (
+        <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+          <Card style={{ padding:"20px" }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:"0 0 16px" }}>📈 حجم التذاكر الشهري</p>
+            <div style={{ display:"flex",gap:6,alignItems:"flex-end",height:100,marginBottom:8 }}>
+              {monthEntries.map(([m,v],i)=>{
+                const total=v.open+v.closed;
+                return (
+                  <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
+                    <span style={{ fontSize:9,color:C.primary,fontWeight:700 }}>{total}</span>
+                    <div style={{ width:"100%",display:"flex",flexDirection:"column",gap:1 }}>
+                      <div style={{ width:"100%",background:C.amber,borderRadius:"2px 2px 0 0",height:`${maxMonth>0?(v.open/maxMonth)*80:4}px`,opacity:0.8 }}/>
+                      <div style={{ width:"100%",background:C.green,height:`${maxMonth>0?(v.closed/maxMonth)*80:4}px`,opacity:0.8 }}/>
+                    </div>
+                    <span style={{ fontSize:9,color:C.muted,writingMode:"vertical-rl",transform:"rotate(180deg)",height:40 }}>
+                      {arM[parseInt(m.split("-")[1])-1]?.slice(0,3)}
+                    </span>
                   </div>
                 );
               })}
             </div>
           </Card>
 
-          {/* Top Customers */}
-          <Card style={{ padding:"18px 20px" }}>
-            <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>🏆 أكثر العملاء تذاكراً</p>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {(data.topPartners||[]).slice(0,7).map((p:any,i:number)=>(
-                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                    <span style={{ fontSize:11, color:C.muted, minWidth:16 }}>{i+1}</span>
-                    <span style={{ fontSize:12, color:C.text, fontWeight:i<3?700:400 }}>{p.name.slice(0,22)}</span>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:14 }}>
+            <Card style={{ padding:"20px" }}>
+              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 12px" }}>📊 معدل الإغلاق الشهري</p>
+              {monthEntries.map(([m,v],i)=>{
+                const total=v.open+v.closed;
+                const rate=total>0?Math.round(v.closed/total*100):0;
+                return (
+                  <div key={i} style={{ marginBottom:8 }}>
+                    <div style={{ display:"flex",justifyContent:"space-between",marginBottom:2 }}>
+                      <span style={{ fontSize:10,color:C.textSec }}>{arM[parseInt(m.split("-")[1])-1]}</span>
+                      <span style={{ fontSize:10,fontWeight:700,color:rate>70?C.green:rate>40?C.amber:C.red }}>{rate}%</span>
+                    </div>
+                    <div style={{ background:C.border,borderRadius:3,height:5,overflow:"hidden" }}>
+                      <div style={{ width:`${rate}%`,height:"100%",background:rate>70?C.green:rate>40?C.amber:C.red,borderRadius:3 }}/>
+                    </div>
                   </div>
-                  <Badge label={String(p.count)} bg={i===0?C.amberLight:C.bg} color={i===0?C.amber:C.muted}/>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* By Type */}
-          {(data.byType||[]).length > 0 && (
-            <Card style={{ padding:"18px 20px", gridColumn:"1/-1" }}>
-              <p style={{ fontWeight:800, fontSize:14, color:C.text, margin:"0 0 14px" }}>📁 حسب نوع التذكرة</p>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {(data.byType||[]).map((tp:any,i:number)=>(
-                  <div key={i} style={{ padding:"8px 14px", borderRadius:20, background:PIE[i%PIE.length]+"20", border:`1px solid ${PIE[i%PIE.length]}40`, display:"flex", gap:6, alignItems:"center" }}>
-                    <span style={{ fontSize:16, fontWeight:900, color:PIE[i%PIE.length] }}>{tp.count}</span>
-                    <span style={{ fontSize:11, color:C.text }}>{tp.name}</span>
-                  </div>
-                ))}
-              </div>
+                );
+              })}
             </Card>
-          )}
+
+            <Card style={{ padding:"20px" }}>
+              <p style={{ fontWeight:800,fontSize:13,color:C.text,margin:"0 0 12px" }}>🔴 الأولويات العالية شهرياً</p>
+              {monthEntries.map(([m],i)=>{
+                const mTix = tix.filter((t:any)=>(t.created||"").startsWith(m));
+                const urgent = mTix.filter((t:any)=>t.priority==="عاجل"||t.priority==="عالي").length;
+                return (
+                  <div key={i} style={{ marginBottom:8 }}>
+                    <div style={{ display:"flex",justifyContent:"space-between",marginBottom:2 }}>
+                      <span style={{ fontSize:10,color:C.textSec }}>{arM[parseInt(m.split("-")[1])-1]}</span>
+                      <span style={{ fontSize:10,fontWeight:700,color:C.red }}>{urgent}</span>
+                    </div>
+                    <div style={{ background:C.border,borderRadius:3,height:5,overflow:"hidden" }}>
+                      <div style={{ width:`${mTix.length>0?(urgent/mTix.length)*100:0}%`,height:"100%",background:C.red,borderRadius:3 }}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          </div>
         </div>
       )}
 
-      {view === "tickets" && (
-        <div>
-          {/* Filters */}
-          <Card style={{ padding:"12px 16px", marginBottom:12 }}>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+      {/* ════ AGENTS ════ */}
+      {tab==="agents" && (
+        <Card style={{ overflow:"hidden" }}>
+          <div style={{ padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:0 }}>👥 أداء الوكلاء (Agents)</p>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  {["الوكيل","إجمالي","مفتوحة","مغلقة","معدل الإغلاق","متأخرة","متوسط وقت الحل","الأداء"].map(h=>(
+                    <th key={h} style={{ padding:"9px 12px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,whiteSpace:"nowrap",fontSize:10 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {agents.length === 0 ? (
+                  <tr><td colSpan={8} style={{ padding:20,textAlign:"center",color:C.muted }}>لا توجد بيانات وكلاء</td></tr>
+                ) : agents.map((a:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"9px 12px",fontWeight:700,color:C.text }}>{a.name}</td>
+                    <td style={{ padding:"9px 12px",fontWeight:700,color:C.primary,textAlign:"center" }}>{a.total}</td>
+                    <td style={{ padding:"9px 12px",color:C.amber,textAlign:"center" }}>{a.open}</td>
+                    <td style={{ padding:"9px 12px",color:C.green,textAlign:"center" }}>{a.closed}</td>
+                    <td style={{ padding:"9px 12px",textAlign:"center" }}>
+                      <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                        <div style={{ flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden" }}>
+                          <div style={{ width:`${a.closedRate}%`,height:"100%",background:a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red,borderRadius:3 }}/>
+                        </div>
+                        <span style={{ fontSize:10,fontWeight:700,color:a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red,minWidth:28 }}>{a.closedRate}%</span>
+                      </div>
+                    </td>
+                    <td style={{ padding:"9px 12px",textAlign:"center" }}>
+                      {a.overdue > 0 ? <Badge label={String(a.overdue)} bg={C.redLight} color={C.red}/> : <span style={{ color:C.muted }}>0</span>}
+                    </td>
+                    <td style={{ padding:"9px 12px",textAlign:"center",color:C.teal }}>
+                      {a.avgHours > 0 ? `${a.avgHours}س` : "—"}
+                    </td>
+                    <td style={{ padding:"9px 12px" }}>
+                      <Badge label={a.closedRate>70?"ممتاز":a.closedRate>40?"جيد":"يحتاج تحسين"}
+                        bg={a.closedRate>70?C.greenLight:a.closedRate>40?C.amberLight:C.redLight}
+                        color={a.closedRate>70?C.green:a.closedRate>40?C.amber:C.red}/>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ════ CUSTOMERS ════ */}
+      {tab==="customers" && (
+        <Card style={{ overflow:"hidden" }}>
+          <div style={{ padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+            <p style={{ fontWeight:800,fontSize:14,color:C.text,margin:0 }}>🏢 تحليل العملاء</p>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
+              <thead>
+                <tr style={{ background:C.primaryLight }}>
+                  {["#","العميل","إجمالي","مفتوحة","مغلقة","عاجلة","معدل الإغلاق","المستوى"].map(h=>(
+                    <th key={h} style={{ padding:"9px 12px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,fontSize:10 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {customers.length===0 ? (
+                  <tr><td colSpan={8} style={{ padding:20,textAlign:"center",color:C.muted }}>لا توجد بيانات عملاء</td></tr>
+                ) : customers.map((c:any,i:number)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`,background:i%2===0?"#fff":"#F8FAFF" }}>
+                    <td style={{ padding:"8px 12px",color:C.muted }}>{i+1}</td>
+                    <td style={{ padding:"8px 12px",fontWeight:700,color:C.text }}>{c.name}</td>
+                    <td style={{ padding:"8px 12px",fontWeight:800,color:C.primary,textAlign:"center" }}>{c.total}</td>
+                    <td style={{ padding:"8px 12px",color:C.amber,textAlign:"center" }}>{c.open}</td>
+                    <td style={{ padding:"8px 12px",color:C.green,textAlign:"center" }}>{c.closed}</td>
+                    <td style={{ padding:"8px 12px",textAlign:"center" }}>
+                      {c.urgentCount>0 ? <Badge label={String(c.urgentCount)} bg={C.redLight} color={C.red}/> : <span style={{ color:C.muted }}>0</span>}
+                    </td>
+                    <td style={{ padding:"8px 12px" }}>
+                      <div style={{ display:"flex",alignItems:"center",gap:4 }}>
+                        <div style={{ width:60,height:5,background:C.border,borderRadius:3,overflow:"hidden" }}>
+                          <div style={{ width:`${c.satisfaction}%`,height:"100%",background:c.satisfaction>70?C.green:C.amber,borderRadius:3 }}/>
+                        </div>
+                        <span style={{ fontSize:10,color:c.satisfaction>70?C.green:C.amber }}>{c.satisfaction}%</span>
+                      </div>
+                    </td>
+                    <td style={{ padding:"8px 12px" }}>
+                      <Badge label={c.total>20?"VIP":c.total>10?"متكرر":"عادي"}
+                        bg={c.total>20?C.amberLight:c.total>10?C.primaryLight:C.bg}
+                        color={c.total>20?C.amber:c.total>10?C.primary:C.muted}/>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ════ TICKETS ════ */}
+      {tab==="tickets" && (
+        <>
+          <Card style={{ padding:"12px 16px",marginBottom:12 }}>
+            <div style={{ display:"flex",gap:8,flexWrap:"wrap",alignItems:"center" }}>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 بحث في التذاكر..."
-                style={{ flex:2, minWidth:160, padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12, outline:"none" }}/>
-              <select value={filterStage} onChange={e=>setStage(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12 }}>
+                style={{ flex:2,minWidth:140,padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:12,outline:"none" }}/>
+              <select value={filterStage} onChange={e=>setStage(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
                 <option value="all">كل الحالات</option>
-                {(data.stages||[]).map((s:any)=><option key={s.id} value={s.name}>{s.name}</option>)}
+                {(data.stages||[]).map((st:any)=><option key={st.id} value={st.name}>{st.name}</option>)}
               </select>
-              <select value={filterPrio} onChange={e=>setPrio(e.target.value)} style={{ padding:"7px 10px", borderRadius:8, border:`1px solid ${C.border}`, background:C.bg, fontSize:12 }}>
+              <select value={filterPrio} onChange={e=>setPrio(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
                 <option value="all">كل الأولويات</option>
-                {["عادي","منخفض","عالي","عاجل"].map(p=><option key={p} value={p}>{p}</option>)}
+                {["عاجل","عالي","عادي","منخفض"].map(p=><option key={p} value={p}>{p}</option>)}
               </select>
-              <span style={{ fontSize:11, color:C.muted }}>{filtered.length} تذكرة</span>
+              <select value={filterTeam} onChange={e=>setTeam(e.target.value)} style={{ padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:C.bg,fontSize:11 }}>
+                <option value="all">كل الفرق</option>
+                {(data.teams||[]).map((tm:any)=><option key={tm.id} value={tm.name}>{tm.name}</option>)}
+              </select>
+              <Badge label={`${filtered.length} نتيجة`} bg={C.primaryLight} color={C.primary}/>
             </div>
           </Card>
 
           <Card style={{ overflow:"hidden" }}>
             <div style={{ overflowX:"auto" }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
                 <thead>
                   <tr style={{ background:C.primaryLight }}>
-                    {["#","الموضوع","العميل","الفريق","النوع","الحالة","الأولوية","المسؤول","تاريخ الإنشاء","الموعد",""].map(h=>(
-                      <th key={h} style={{ padding:"9px 10px", textAlign:"right", color:C.primary, fontWeight:700, borderBottom:`1px solid ${C.primarySoft}`, whiteSpace:"nowrap", fontSize:10 }}>{h}</th>
+                    {["#","الموضوع","العميل","الفريق","الحالة","الأولوية","المسؤول","الإنشاء","الموعد","الحالة"].map(h=>(
+                      <th key={h} style={{ padding:"9px 10px",textAlign:"right",color:C.primary,fontWeight:700,borderBottom:`1px solid ${C.primarySoft}`,whiteSpace:"nowrap",fontSize:10 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (
-                    <tr><td colSpan={10} style={{ padding:24, textAlign:"center", color:C.muted }}>لا توجد تذاكر مطابقة</td></tr>
+                  {filtered.length===0 ? (
+                    <tr><td colSpan={10} style={{ padding:24,textAlign:"center",color:C.muted }}>لا توجد تذاكر مطابقة</td></tr>
                   ) : filtered.map((t:any,i:number)=>{
-                    const pc  = prioColor[t.priority]||{c:C.muted,bg:C.bg};
-                    const isOD = t.isOverdue;
+                    const pc=prioColor[t.priority]||{c:C.muted,bg:C.bg};
                     return (
-                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:isOD?"#FFF5F5":i%2===0?"#fff":"#F8FAFF", cursor:"pointer" }}
-                        onClick={()=>setTicket(selTicket?.id===t.id?null:t)}
+                      <tr key={i} onClick={()=>setTicket(selTicket?.id===t.id?null:t)}
+                        style={{ borderBottom:`1px solid ${C.border}`,background:t.isOverdue?"#FFF5F5":i%2===0?"#fff":"#F8FAFF",cursor:"pointer" }}
                         onMouseEnter={e=>(e.currentTarget as any).style.background=C.primaryLight}
-                        onMouseLeave={e=>(e.currentTarget as any).style.background=isOD?"#FFF5F5":i%2===0?"#fff":"#F8FAFF"}>
-                        <td style={{ padding:"8px 10px", color:C.muted, fontFamily:"monospace" }}>#{t.id}</td>
-                        <td style={{ padding:"8px 10px", color:C.text, fontWeight:600, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                          {t.slaFail && <span style={{ color:C.red, marginLeft:4 }}>⚠️</span>}
-                          {isOD && <span style={{ color:C.amber, marginLeft:4 }}>⏰</span>}
+                        onMouseLeave={e=>(e.currentTarget as any).style.background=t.isOverdue?"#FFF5F5":i%2===0?"#fff":"#F8FAFF"}>
+                        <td style={{ padding:"7px 10px",color:C.muted,fontFamily:"monospace",fontSize:10 }}>#{t.id}</td>
+                        <td style={{ padding:"7px 10px",color:C.text,fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+                          {t.slaFail && <span title="SLA فشل" style={{ marginLeft:4 }}>⚠️</span>}
+                          {t.isOverdue && <span title="متأخرة" style={{ marginLeft:4 }}>⏰</span>}
                           {t.name}
                         </td>
-                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.partner.slice(0,16)}</td>
-                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.team.slice(0,14)}</td>
-                        <td style={{ padding:"8px 10px", color:C.muted, fontSize:10 }}>{t.type.slice(0,14)||"—"}</td>
-                        <td style={{ padding:"8px 10px" }}><Badge label={t.stage} bg={C.bg} color={C.textSec}/></td>
-                        <td style={{ padding:"8px 10px" }}><Badge label={t.priority} bg={pc.bg} color={pc.c}/></td>
-                        <td style={{ padding:"8px 10px", color:C.textSec }}>{t.assignee.slice(0,14)||"—"}</td>
-                        <td style={{ padding:"8px 10px", color:C.muted, fontFamily:"monospace", fontSize:10 }}>{t.created}</td>
-                        <td style={{ padding:"8px 10px", color:isOD?C.red:C.muted, fontFamily:"monospace", fontSize:10 }}>{t.deadline||"—"}</td>
-                        <td style={{ padding:"8px 10px" }}>{t.closed && <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>}</td>
+                        <td style={{ padding:"7px 10px",color:C.textSec,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{t.partner}</td>
+                        <td style={{ padding:"7px 10px",color:C.textSec,fontSize:10 }}>{t.team}</td>
+                        <td style={{ padding:"7px 10px" }}><Badge label={t.stage} bg={C.bg} color={C.textSec}/></td>
+                        <td style={{ padding:"7px 10px" }}><Badge label={t.priority} bg={pc.bg} color={pc.c}/></td>
+                        <td style={{ padding:"7px 10px",color:C.textSec,fontSize:10 }}>{t.assignee||"—"}</td>
+                        <td style={{ padding:"7px 10px",color:C.muted,fontFamily:"monospace",fontSize:10 }}>{t.created}</td>
+                        <td style={{ padding:"7px 10px",color:t.isOverdue?C.red:C.muted,fontFamily:"monospace",fontSize:10 }}>{t.deadline||"—"}</td>
+                        <td style={{ padding:"7px 10px" }}>
+                          {t.closed ? <Badge label="✅ مغلقة" bg={C.greenLight} color={C.green}/>
+                                    : <Badge label="🔓 مفتوحة" bg={C.amberLight} color={C.amber}/>}
+                        </td>
                       </tr>
                     );
                   })}
@@ -2851,15 +3259,15 @@ function HelpdeskPage({ companyId, co }:any) {
             </div>
           </Card>
 
-          {/* Ticket Detail Modal */}
+          {/* Detail Modal */}
           {selTicket && (
-            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, direction:"rtl" }}
+            <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,direction:"rtl" }}
               onClick={()=>setTicket(null)}>
-              <div onClick={e=>e.stopPropagation()} style={{ background:C.surface, borderRadius:16, padding:24, maxWidth:520, width:"94%", boxShadow:"0 20px 60px rgba(0,0,0,0.25)", border:`1px solid ${C.border}`, maxHeight:"80vh", overflowY:"auto" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+              <div onClick={e=>e.stopPropagation()} style={{ background:C.surface,borderRadius:16,padding:24,maxWidth:520,width:"94%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)",maxHeight:"80vh",overflowY:"auto" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",marginBottom:16 }}>
                   <div>
-                    <p style={{ fontSize:16, fontWeight:900, color:C.text, margin:"0 0 6px" }}>🎫 {selTicket.name}</p>
-                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                    <p style={{ fontSize:16,fontWeight:900,color:C.text,margin:"0 0 8px" }}>🎫 {selTicket.name}</p>
+                    <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
                       <Badge label={`#${selTicket.id}`} bg={C.bg} color={C.muted}/>
                       <Badge label={selTicket.priority} bg={(prioColor[selTicket.priority]||{bg:C.bg}).bg} color={(prioColor[selTicket.priority]||{c:C.muted}).c}/>
                       <Badge label={selTicket.stage} bg={C.primaryLight} color={C.primary}/>
@@ -2868,29 +3276,31 @@ function HelpdeskPage({ companyId, co }:any) {
                       {selTicket.slaFail && <Badge label="⚠️ SLA فشل" bg={C.amberLight} color={C.amber}/>}
                     </div>
                   </div>
-                  <button onClick={()=>setTicket(null)} style={{ background:"transparent", border:"none", fontSize:22, cursor:"pointer", color:C.muted }}>×</button>
+                  <button onClick={()=>setTicket(null)} style={{ background:"transparent",border:"none",fontSize:22,cursor:"pointer",color:C.muted }}>×</button>
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
                   {[
-                    {l:"العميل",       v:selTicket.partner   ||"—"},
-                    {l:"المسؤول",      v:selTicket.assignee  ||"—"},
-                    {l:"الفريق",       v:selTicket.team      ||"—"},
-                    {l:"النوع",        v:selTicket.type      ||"—"},
-                    {l:"تاريخ الإنشاء",v:selTicket.created   ||"—"},
-                    {l:"الموعد النهائي",v:selTicket.deadline  ||"—"},
-                    {l:"تاريخ الإغلاق",v:selTicket.closed    ||"مفتوحة"},
+                    {l:"العميل",         v:selTicket.partner   ||"—"},
+                    {l:"المسؤول",        v:selTicket.assignee  ||"—"},
+                    {l:"الفريق",         v:selTicket.team      ||"—"},
+                    {l:"النوع",          v:selTicket.type      ||"—"},
+                    {l:"تاريخ الإنشاء", v:selTicket.created   ||"—"},
+                    {l:"الموعد النهائي", v:selTicket.deadline  ||"—"},
+                    {l:"تاريخ الإغلاق", v:selTicket.closed    ||"مفتوحة"},
+                    {l:"SLA",            v:selTicket.slaFail?"❌ فشل":"✅ نجح"},
                   ].map((s,i)=>(
-                    <div key={i} style={{ padding:"10px 12px", borderRadius:8, background:C.bg }}>
-                      <p style={{ fontSize:10, color:C.muted, margin:"0 0 3px" }}>{s.l}</p>
-                      <p style={{ fontSize:12, fontWeight:600, color:C.text, margin:0 }}>{s.v}</p>
+                    <div key={i} style={{ padding:"10px 12px",borderRadius:8,background:C.bg }}>
+                      <p style={{ fontSize:10,color:C.muted,margin:"0 0 3px" }}>{s.l}</p>
+                      <p style={{ fontSize:12,fontWeight:600,color:C.text,margin:0 }}>{s.v}</p>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
+      </>}
     </div>
   );
 }
