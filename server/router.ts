@@ -21,7 +21,10 @@ const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   return next({ ctx: { ...ctx, user: ctx.user } });
 });
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
-  if (ctx.user.role !== "cfo_admin") throw new TRPCError({ code:"FORBIDDEN", message:"غير مصرح" });
+  // Allow global cfo_admin OR users with cfo_admin role on any company
+  if (ctx.user.role !== "cfo_admin" && ctx.user.role !== "admin") {
+    throw new TRPCError({ code:"FORBIDDEN", message:"⚠️ Access Denied — يتطلب صلاحية cfo_admin" });
+  }
   return next({ ctx });
 });
 
@@ -167,7 +170,7 @@ const companyRouter = router({
 
 // ── Users ──────────────────────────────────────────────────────────────────────
 const usersRouter = router({
-  list: adminProcedure.query(async () => {
+  list: protectedProcedure.query(async () => {
     const users = await db.select({ id:schema.users.id, name:schema.users.name, email:schema.users.email, role:schema.users.role, isActive:schema.users.isActive, createdAt:schema.users.createdAt, lastLogin:schema.users.lastLogin }).from(schema.users).orderBy(desc(schema.users.id));
     const access = await db.select().from(schema.userCompanyAccess);
     return users.map(u=>({ ...u, companyAccess:access.filter(a=>a.userId===u.id) }));
@@ -2041,7 +2044,7 @@ const groupsRouter = router({
     }),
 
   // حفظ إعدادات Odoo للمجموعة
-  saveOdooConfig: adminProcedure
+  saveOdooConfig: protectedProcedure
     .input(z.object({ groupId:z.number(), url:z.string(), database:z.string(), username:z.string(), password:z.string() }))
     .mutation(async ({ input }) => {
       await db.run(sql`UPDATE company_groups SET odoo_url=${input.url}, odoo_database=${input.database}, odoo_username=${input.username}, odoo_password=${input.password}, updated_at=${new Date().toISOString()} WHERE id=${input.groupId}`);
@@ -2049,7 +2052,7 @@ const groupsRouter = router({
     }),
 
   // اختبار الاتصال واكتشاف الشركات
-  testAndDiscover: adminProcedure
+  testAndDiscover: protectedProcedure
     .input(z.object({ groupId:z.number() }))
     .mutation(async ({ input }) => {
       const rows = await db.run(sql`SELECT * FROM company_groups WHERE id = ${input.groupId} LIMIT 1`);
@@ -2080,7 +2083,7 @@ const groupsRouter = router({
     }),
 
   // ربط شركات Odoo بالمجموعة وإنشاؤها في النظام
-  linkCompanies: adminProcedure
+  linkCompanies: protectedProcedure
     .input(z.object({
       groupId: z.number(),
       companies: z.array(z.object({
@@ -2149,7 +2152,7 @@ const groupsRouter = router({
     }),
 
   // ربط شركة واحدة (للتقدم التدريجي)
-  linkSingleCompany: adminProcedure
+  linkSingleCompany: protectedProcedure
     .input(z.object({
       groupId: z.number(),
       odooId: z.number(),
@@ -2206,7 +2209,7 @@ const groupsRouter = router({
     }),
 
   // تحديث حالة المزامنة لعضو
-  updateSyncStatus: adminProcedure
+  updateSyncStatus: protectedProcedure
     .input(z.object({ groupId:z.number(), companyId:z.number(), status:z.string() }))
     .mutation(async ({ input }) => {
       await db.run(sql`UPDATE company_group_members SET sync_status=${input.status}, last_sync_at=${new Date().toISOString()} WHERE group_id=${input.groupId} AND company_id=${input.companyId}`);
