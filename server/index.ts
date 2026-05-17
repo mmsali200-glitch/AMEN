@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { seedBawaba } from "./seed_bawaba.js";
+import { seedBawaba, fixOdooUrls } from "./seed_bawaba.js";
 import { appRouter, createContext } from "./router.js";
 import path from "path";
 import fs from "fs";
@@ -103,6 +103,7 @@ app.get("/bg-sync/list", (_req, res) => {
 
 // Run seed on startup
 seedBawaba().then(()=>console.log("Seed done")).catch(console.error);
+fixOdooUrls().catch(console.error);
 
 app.listen(PORT, () => {
   console.log(`\n🚀 CFO Intelligence System`);

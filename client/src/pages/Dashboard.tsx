@@ -151,8 +151,8 @@ function OdooWizardPage({ companyId, co }:any) {
   const [activeGroup,  setActiveGroup]  = useState<any>(null);
   const [newName,      setNewName]      = useState("");
   const [odooForm,     setOdooForm]     = useState({
-    url:"https://onesolutionc-roma.odoo.com",
-    database:"onesolutionc-roma-main-17095422",
+    url:"https://habbaba-giftgates.odoo.com",
+    database:"habbaba-giftgates-main-10032787",
     username:"admin@admin.com", password:"KMM9999"
   });
   const [discovered,  setDiscovered]   = useState<any[]>([]);

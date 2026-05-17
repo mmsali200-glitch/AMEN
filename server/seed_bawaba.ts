@@ -130,3 +130,36 @@ export async function seedBawaba() {
     console.error("[SEED] ❌ خطأ:", e.message);
   }
 }
+
+// ── تصحيح إعدادات Odoo الخاطئة في جدول company_groups ─────────────────────
+export async function fixOdooUrls() {
+  try {
+    const __d = (await import("path")).dirname((await import("url")).fileURLToPath(import.meta.url));
+    const dbPath = (await import("path")).join(__d, "..", "data", "cfo.db");
+    const db = (await import("@libsql/client")).createClient({ url: `file:${dbPath}` });
+
+    // تصحيح أي URL خاطئ في company_groups
+    await db.execute({
+      sql: `UPDATE company_groups SET
+        odoo_url      = 'https://habbaba-giftgates.odoo.com',
+        odoo_database = 'habbaba-giftgates-main-10032787',
+        odoo_username = 'admin@admin.com',
+        odoo_password = 'KMM9999'
+        WHERE odoo_url LIKE '%businessesgates%' OR odoo_url LIKE '%onesolutionc%'`,
+      args: []
+    }).catch(()=>{});
+
+    // تصحيح odoo_configs أيضاً
+    await db.execute({
+      sql: `UPDATE odoo_configs SET
+        url      = 'https://habbaba-giftgates.odoo.com',
+        database = 'habbaba-giftgates-main-10032787'
+        WHERE url LIKE '%businessesgates%' OR url LIKE '%onesolutionc%'`,
+      args: []
+    }).catch(()=>{});
+
+    console.log("[FIX] ✅ تم تصحيح إعدادات Odoo URL");
+  } catch(e: any) {
+    console.error("[FIX] Error:", e.message);
+  }
+}

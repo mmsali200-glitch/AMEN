@@ -2041,7 +2041,7 @@ const groupsRouter = router({
     }),
 
   // حفظ إعدادات Odoo للمجموعة
-  saveOdooConfig: adminProcedure
+  saveOdooConfig: protectedProcedure
     .input(z.object({ groupId:z.number(), url:z.string(), database:z.string(), username:z.string(), password:z.string() }))
     .mutation(async ({ input }) => {
       await db.run(sql`UPDATE company_groups SET odoo_url=${input.url}, odoo_database=${input.database}, odoo_username=${input.username}, odoo_password=${input.password}, updated_at=${new Date().toISOString()} WHERE id=${input.groupId}`);
@@ -2049,7 +2049,7 @@ const groupsRouter = router({
     }),
 
   // اختبار الاتصال واكتشاف الشركات
-  testAndDiscover: adminProcedure
+  testAndDiscover: protectedProcedure
     .input(z.object({ groupId:z.number() }))
     .mutation(async ({ input }) => {
       const rows = await db.run(sql`SELECT * FROM company_groups WHERE id = ${input.groupId} LIMIT 1`);
@@ -2080,7 +2080,7 @@ const groupsRouter = router({
     }),
 
   // ربط شركات Odoo بالمجموعة وإنشاؤها في النظام
-  linkCompanies: adminProcedure
+  linkCompanies: protectedProcedure
     .input(z.object({
       groupId: z.number(),
       companies: z.array(z.object({
@@ -2149,7 +2149,7 @@ const groupsRouter = router({
     }),
 
   // ربط شركة واحدة (للتقدم التدريجي)
-  linkSingleCompany: adminProcedure
+  linkSingleCompany: protectedProcedure
     .input(z.object({
       groupId: z.number(),
       odooId: z.number(),
