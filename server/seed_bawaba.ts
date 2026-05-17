@@ -208,3 +208,65 @@ export async function fixOdooUrls() {
     console.error("[FIX] Error:", e.message);
   }
 }
+    // ══ شركة ثانية: بوابة الأعمال (businessesgates) ══════════════════════════
+    const bg2 = await db.execute("SELECT id FROM companies WHERE name='بوابة الأعمال' LIMIT 1").catch(()=>({rows:[]}));
+    let compId2: number;
+
+    if (bg2.rows.length > 0) {
+      compId2 = Number((bg2.rows[0] as any).id);
+      console.log("[SEED] ✅ بوابة الأعمال موجودة ID:", compId2);
+    } else {
+      const u2 = await db.execute("SELECT id FROM users LIMIT 1").catch(()=>({rows:[{id:1}]}));
+      const uid2 = (u2.rows[0] as any)?.id || 1;
+      const ins2 = await db.execute({
+        sql: `INSERT INTO companies (name, currency, industry, created_by, created_at)
+              VALUES ('بوابة الأعمال', 'KWD', 'retail', ?, datetime('now'))`,
+        args: [uid2]
+      });
+      compId2 = Number(ins2.lastInsertRowid);
+      console.log("[SEED] ✅ تم إنشاء بوابة الأعمال ID:", compId2);
+    }
+
+    // Odoo config لبوابة الأعمال
+    await db.execute({
+      sql: `INSERT OR REPLACE INTO odoo_configs
+            (company_id, url, database, username, password, is_connected, odoo_company_id, odoo_company_name, created_at)
+            VALUES (?, 'https://customer-support.main.businessesgates.com', 'customer-support-main-db', 'admin', '123', 0, 1, 'بوابة الأعمال', datetime('now'))`,
+      args: [compId2]
+    });
+
+    // منح الصلاحيات
+    const u3 = await db.execute("SELECT id FROM users LIMIT 1").catch(()=>({rows:[{id:1}]}));
+    const uid3 = (u3.rows[0] as any)?.id || 1;
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO user_company_access (user_id, company_id, role, status, created_at)
+            VALUES (?, ?, 'cfo_admin', 'active', datetime('now'))`,
+      args: [uid3, compId2]
+    }).catch(()=>{});
+
+    // إنشاء مجموعة لبوابة الأعمال
+    const grp2 = await db.execute(
+      `SELECT id FROM company_groups WHERE odoo_url='https://customer-support.main.businessesgates.com' LIMIT 1`
+    ).catch(()=>({rows:[]}));
+
+    let grpId2: number;
+    if (grp2.rows.length > 0) {
+      grpId2 = Number((grp2.rows[0] as any).id);
+    } else {
+      const gi2 = await db.execute({
+        sql: `INSERT INTO company_groups (name, base_currency, odoo_url, odoo_database, odoo_username, odoo_password, is_connected)
+              VALUES ('بوابة الأعمال', 'KWD', 'https://customer-support.main.businessesgates.com', 'customer-support-main-db', 'admin', '123', 0)`,
+        args: []
+      });
+      grpId2 = Number(gi2.lastInsertRowid);
+    }
+
+    // ربط الشركة بالمجموعة
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, currency)
+            VALUES (?, ?, 1, 'بوابة الأعمال', 'KWD')`,
+      args: [grpId2, compId2]
+    }).catch(()=>{});
+
+    console.log("[SEED] ✅ تم إعداد بوابة الأعمال (businessesgates) بالكامل");
+
