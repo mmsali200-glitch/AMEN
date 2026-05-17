@@ -12,17 +12,6 @@ function getDb() {
   return createClient({ url: `file:${path.join(__d, "..", "data", "cfo.db")}` });
 }
 
-async function odooCall(method: string, model: string, args: any[], kwargs: any = {}) {
-  const res = await fetch(`${ODOO_URL}/web/dataset/call_kw`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:1, params:{ model, method, args, kwargs } })
-  });
-  const data = await res.json() as any;
-  if (data.error) throw new Error(data.error.data?.message || data.error.message);
-  return data.result;
-}
-
 export async function seedBawaba() {
   const db = getDb();
   try {
