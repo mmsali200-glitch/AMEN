@@ -157,8 +157,9 @@ export async function fixOdooUrls() {
     )`).catch(()=>{});
 
     // ── 2. احذف المجموعات بالـ URL الخاطئ ───────────────────────────────
+    // لا نحذف businessesgates — شركة حقيقية!
     await db.execute(
-      `DELETE FROM company_groups WHERE odoo_url LIKE '%businessesgates%' OR odoo_url LIKE '%onesolutionc%' OR odoo_url IS NULL OR odoo_url = ''`
+      `DELETE FROM company_groups WHERE odoo_url IS NULL OR odoo_url = ''`
     ).catch(()=>{});
 
     // ── 3. تأكد وجود مجموعة البوابة الصحيحة ─────────────────────────────
@@ -182,7 +183,7 @@ export async function fixOdooUrls() {
 
     // ── 4. صحح odoo_configs ───────────────────────────────────────────────
     await db.execute({
-      sql: `UPDATE odoo_configs SET url=?, database=? WHERE url LIKE '%businessesgates%' OR url LIKE '%onesolutionc%'`,
+      sql: `UPDATE odoo_configs SET url=?, database=? WHERE url LIKE '%onesolutionc%'`,
       args: [CORRECT_URL, CORRECT_DB]
     }).catch(()=>{});
 
