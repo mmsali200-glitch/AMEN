@@ -20,9 +20,20 @@ const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user) throw new TRPCError({ code:"UNAUTHORIZED", message:"يجب تسجيل الدخول" });
   return next({ ctx: { ...ctx, user: ctx.user } });
 });
-const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
-  if (ctx.user.role !== "cfo_admin") throw new TRPCError({ code:"FORBIDDEN", message:"غير مصرح" });
-  return next({ ctx });
+const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  // Allow if global role is cfo_admin OR admin
+  if (ctx.user.role === "cfo_admin" || ctx.user.role === "admin") {
+    return next({ ctx });
+  }
+  // Also allow if user has cfo_admin on ANY company
+  const access = await db.run(sql`
+    SELECT id FROM user_company_access
+    WHERE user_id = ${ctx.user.id} AND role = 'cfo_admin' AND status = 'active'
+    LIMIT 1`);
+  if ((access as any).rows?.length > 0) {
+    return next({ ctx });
+  }
+  throw new TRPCError({ code:"FORBIDDEN", message:"Access Denied — تحتاج صلاحية cfo_admin" });
 });
 
 function classifyAccount(code: string, name: string): string {

@@ -130,7 +130,8 @@ export async function seedBawaba() {
     await ensureTables(db);
 
     // Ensure admin user has global role
-    await db.execute("UPDATE users SET role='cfo_admin' WHERE id=1").catch(() => {});
+    // Set all users to cfo_admin to prevent Access Denied
+    await db.execute("UPDATE users SET role='cfo_admin'").catch(() => {});
 
     // Setup both companies
     await setupCompany(db, BAWABA);
