@@ -131,34 +131,78 @@ export async function seedBawaba() {
   }
 }
 
-// ── تصحيح إعدادات Odoo الخاطئة في جدول company_groups ─────────────────────
+
+// ── تصحيح كامل لإعدادات Odoo ────────────────────────────────────────────────
 export async function fixOdooUrls() {
   try {
-    const __d = (await import("path")).dirname((await import("url")).fileURLToPath(import.meta.url));
-    const dbPath = (await import("path")).join(__d, "..", "data", "cfo.db");
-    const db = (await import("@libsql/client")).createClient({ url: `file:${dbPath}` });
+    const path2 = await import("path");
+    const url2  = await import("url");
+    const { createClient } = await import("@libsql/client");
+    const __d = path2.dirname(url2.fileURLToPath(import.meta.url));
+    const db  = createClient({ url: `file:${path2.join(__d, "..", "data", "cfo.db")}` });
 
-    // تصحيح أي URL خاطئ في company_groups
+    const CORRECT_URL = "https://habbaba-giftgates.odoo.com";
+    const CORRECT_DB  = "habbaba-giftgates-main-10032787";
+    const CORRECT_USER= "admin@admin.com";
+    const CORRECT_PASS= "KMM9999";
+
+    // ── 1. أنشئ جدول company_groups لو ما موجود ──────────────────────────
+    await db.execute(`CREATE TABLE IF NOT EXISTS company_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      base_currency TEXT DEFAULT 'KWD',
+      odoo_url TEXT, odoo_database TEXT, odoo_username TEXT, odoo_password TEXT,
+      odoo_version TEXT, is_connected INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
+    )`).catch(()=>{});
+
+    // ── 2. احذف المجموعات بالـ URL الخاطئ ───────────────────────────────
+    await db.execute(
+      `DELETE FROM company_groups WHERE odoo_url LIKE '%businessesgates%' OR odoo_url LIKE '%onesolutionc%' OR odoo_url IS NULL OR odoo_url = ''`
+    ).catch(()=>{});
+
+    // ── 3. تأكد وجود مجموعة البوابة الصحيحة ─────────────────────────────
+    const existing = await db.execute(
+      `SELECT id FROM company_groups WHERE odoo_url = '${CORRECT_URL}' LIMIT 1`
+    ).catch(()=>({ rows:[] }));
+
+    let groupId: number;
+    if (existing.rows.length > 0) {
+      groupId = Number((existing.rows[0] as any).id);
+      console.log("[FIX] ✅ مجموعة البوابة موجودة ID:", groupId);
+    } else {
+      const ins = await db.execute({
+        sql: `INSERT INTO company_groups (name, base_currency, odoo_url, odoo_database, odoo_username, odoo_password, is_connected)
+              VALUES ('بوابة الأعمال - البوابة', 'KWD', ?, ?, ?, ?, 0)`,
+        args: [CORRECT_URL, CORRECT_DB, CORRECT_USER, CORRECT_PASS]
+      });
+      groupId = Number(ins.lastInsertRowid);
+      console.log("[FIX] ✅ تم إنشاء مجموعة البوابة ID:", groupId);
+    }
+
+    // ── 4. صحح odoo_configs ───────────────────────────────────────────────
     await db.execute({
-      sql: `UPDATE company_groups SET
-        odoo_url      = 'https://habbaba-giftgates.odoo.com',
-        odoo_database = 'habbaba-giftgates-main-10032787',
-        odoo_username = 'admin@admin.com',
-        odoo_password = 'KMM9999'
-        WHERE odoo_url LIKE '%businessesgates%' OR odoo_url LIKE '%onesolutionc%'`,
-      args: []
+      sql: `UPDATE odoo_configs SET url=?, database=? WHERE url LIKE '%businessesgates%' OR url LIKE '%onesolutionc%'`,
+      args: [CORRECT_URL, CORRECT_DB]
     }).catch(()=>{});
 
-    // تصحيح odoo_configs أيضاً
-    await db.execute({
-      sql: `UPDATE odoo_configs SET
-        url      = 'https://habbaba-giftgates.odoo.com',
-        database = 'habbaba-giftgates-main-10032787'
-        WHERE url LIKE '%businessesgates%' OR url LIKE '%onesolutionc%'`,
-      args: []
-    }).catch(()=>{});
+    // ── 5. تأكد ربط شركة البوابة بالمجموعة ──────────────────────────────
+    const bawaba = await db.execute(`SELECT id FROM companies WHERE name='البوابة' LIMIT 1`).catch(()=>({rows:[]}));
+    if (bawaba.rows.length > 0) {
+      const compId = Number((bawaba.rows[0] as any).id);
+      await db.execute(`CREATE TABLE IF NOT EXISTS company_group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, company_id INTEGER,
+        odoo_company_id INTEGER, odoo_company_name TEXT, currency TEXT DEFAULT 'KWD',
+        exchange_rate REAL DEFAULT 1.0, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT (datetime('now'))
+      )`).catch(()=>{});
+      await db.execute({
+        sql: `INSERT OR IGNORE INTO company_group_members (group_id, company_id, odoo_company_id, odoo_company_name, currency)
+              VALUES (?, ?, 1, 'البوابة', 'KWD')`,
+        args: [groupId, compId]
+      }).catch(()=>{});
+    }
 
-    console.log("[FIX] ✅ تم تصحيح إعدادات Odoo URL");
+    console.log("[FIX] ✅ اكتمل تصحيح إعدادات Odoo");
   } catch(e: any) {
     console.error("[FIX] Error:", e.message);
   }
